@@ -1,0 +1,71 @@
+alias cdwsl='cd /mnt/c/Users/吳岳岷/Downloads'
+alias labpy310='conda activate py310 && jupyter lab'
+alias ncnuhome1='ssh -p 9091 compchem@163.22.23.73'
+alias ncnuhome3='ssh -p 9093 compchem@163.22.23.73'
+alias ncnuhpc01='ssh -t -p 9210 nuser08@163.22.23.73 "ssh nuser08@10.88.90.201"'
+alias ncnuhpc02='ssh -t -p 9210 nuser08@163.22.23.73 "ssh nuser08@10.88.90.197"'
+alias ncnuhpc03='ssh -t -p 9210 nuser08@163.22.23.73 "ssh nuser08@10.88.90.199"'
+alias ncnucpu01='ssh -t -p 9210 nuser08@163.22.23.73 "ssh nuser08@10.88.90.189"'
+alias ncnucpu02='ssh -t -p 9210 nuser08@163.22.23.73 "ssh nuser08@10.88.90.187"'
+
+alias remhpc2loc='function r2lf(){ scp -r -o ProxyJump=nuser08@163.22.23.73:9210  nuser08@10.88.90.201:~/RUN/"$1" .;}; r2lf'
+alias remhome12loc='function r2lf(){ scp -r -P 9091 compchem@163.22.23.73:~/wym/OpenMM-ConstantV/Project/RUN/"$1" .;}; r2lf'
+alias remhome32loc='function r2lf(){ scp -r -P 9093 compchem@163.22.23.73:~/wym/OpenMM-ConstantV/RUN/"$1" .;}; r2lf'
+alias loc2remhpc='function l2rf(){ scp -r -o "$1" ProxyJump=nuser08@163.22.23.73:9210  nuser08@10.88.90.201:~/RUN/"$2"/;}; l2rf'
+alias loc2remhome1='function l2rf(){ scp -r -P 9091 "$1" compchem@163.22.23.73:~/wym/OpenMM-ConstantV/Project/RUN/"$2"/;}; l2rf'
+alias loc2remhome3='function l2rf(){ scp -r -P 9093 "$1" compchem@163.22.23.73:~/wym/OpenMM-ConstantV/RUN/"$2"/;}; l2rf'
+
+function remhpcAR2loc() {
+    local dir="$1"       # First argument: directory name
+    local ns_value="$2"  # Second argument: ns_value
+    shift 2              # Remove the first two arguments
+    local versions=("$@") # Remaining arguments as an array
+
+    for version in "${versions[@]}"; do
+        echo "Transferring Voltage $version..."
+        local local_path=~/Project1/OpenMM_ConstantV/sim_output_dir/"$dir"/sim_output_v"$version"_ns"$ns_value"/
+
+        # Create the local directory structure
+        mkdir -p "$local_path"
+
+        # Transfer the directory
+        scp -r -o ProxyJump=nuser08@163.22.23.73:9210 \
+        nuser08@10.88.90.201:~/RUN/"$dir"/sim_output_v"$version"_ns"$ns_value"/AnaRes \
+        "$local_path"
+    done
+}
+function remhome1AR2loc() {
+    local dir="$1"       # First argument: directory name
+    local ns_value="$2"  # Second argument: ns_value
+    shift 2              # Remove the first two arguments
+    local versions=("$@") # Remaining arguments as an array
+    for version in "${versions[@]}"; do
+        echo "Transferring Voltage $version..."
+        local local_path=~/Project1/OpenMM_ConstantV/sim_output_dir/"$dir"/sim_output_v"$version"_ns"$ns_value"/
+
+        # Create the local directory structure
+        mkdir -p "$local_path"
+
+        # Transfer the directory
+        scp -r -P 9091 compchem@163.22.23.73:~/wym/OpenMM-ConstantV/Project/"$dir"/sim_output_v"$version"_ns"$ns_value"/AnaRes \
+        "$local_path"
+    done
+}
+function remhome3AR2loc() {
+    local dir="$1"       # First argument: directory name
+    local ns_value="$2"  # Second argument: ns_value
+    shift 2              # Remove the first two arguments
+    local versions=("$@") # Remaining arguments as an array
+
+    for version in "${versions[@]}"; do
+        echo "Transferring Voltage $version..."
+        local local_path=~/Project1/OpenMM_ConstantV/sim_output_dir/"$dir"/sim_output_v"$version"_ns"$ns_value"/
+
+        # Create the local directory structure
+        mkdir -p "$local_path"
+
+        # Transfer the directory
+        scp -r -P 9093 compchem@163.22.23.73:~/wym/OpenMM-ConstantV/RUN/"$dir"/sim_output_v"$version"_ns"$ns_value"/AnaRes \
+        "$local_path"
+    done
+}
