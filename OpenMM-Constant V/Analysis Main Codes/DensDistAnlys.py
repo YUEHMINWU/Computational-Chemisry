@@ -41,6 +41,39 @@ class SDD:
         bin_width = (max(self.hist_range)-min(self.hist_range))/self.num_bins
         density= avg_histogram / (area*bin_width)
         return density
+        
+    def cal_dens_bulk(self, n_ionpair, mw_ionpair):  
+        histograms = []
+        vol_list = []
+        # NPT simulation shall notice the box size change with trajectory so the dimension of box should use the start frame doesn't have any big change in box size.
+        conv=10*mw_ionpair*n_ionpair*(1/6.023)
+
+        for ts in self.u.trajectory[self.Startframe:self.Endframe]:
+            vec_x = self.u.trajectory.dimensions[0]
+            vec_y = self.u.trajectory.dimensions[1]
+            vec_z = self.u.trajectory.dimensions[2]
+            area = vec_x * vec_y
+            vol = area * vec_z
+            vol_list.append(vol)
+            component_z_coords = np.array(self.component.positions[:, 2])
+            accumulated_histogram = np.zeros(self.num_bins)
+            hist, bin_edges = np.histogram(
+                component_z_coords,
+                bins=self.num_bins,
+                range=self.hist_range
+            )
+            histograms.append(hist)
+        
+        accumulated_histogram = np.sum(histograms, axis=0) # sum the values of each bin across all frames
+        avg_histogram = accumulated_histogram / (self.Endframe- self.Startframe)
+        bin_width = (max(self.hist_range)-min(self.hist_range))/self.num_bins
+        density= avg_histogram / (area*bin_width)
+        avg_dens = np.sum(density[(self.num_bins // 2 - 50):(self.num_bins // 2 + 50)]) / 100
+        print(avg_dens)
+        vol = np.array(vol_list)
+        avg_vol = np.mean(vol)
+        print(conv/(avg_vol))
+        return density
 
 class NTD:
     def __init__(self, filename):
