@@ -60,7 +60,8 @@ mol addrep top
 mol modmaterial 1 top Opaque
 
 # Process each frame
-for {set frame 0} {$frame < 10} {incr frame} {
+set numFrames [molinfo top get numframes]
+for {set frame 0} {$frame < $numFrames} {incr frame} {
     # Move to current frame
     animate goto $frame
     
@@ -103,59 +104,6 @@ for {set frame 0} {$frame < 10} {incr frame} {
     display update
 }
 
-# Create color scale window
-proc create_colorbar {min_charge max_charge} {
-    # Destroy existing color bar if it exists
-    if {[winfo exists ".colorbar"]} {
-        destroy ".colorbar"
-    }
-    
-    # Create color bar window
-    set colorbar [toplevel ".colorbar"]
-    wm title $colorbar "Charge Distribution (e)"
-    
-    # Create canvas for the color bar
-    canvas $colorbar.canvas -width 300 -height 100
-    pack $colorbar.canvas
-
-    # Create the gradient
-    for {set i 0} {$i < 300} {incr i} {
-        # Calculate charge value for this position
-        set fraction [expr {$i / 300.0}]
-        set charge [expr {$min_charge + ($max_charge - $min_charge) * $fraction}]
-        
-        # Get RGB colors using the same function as the main visualization
-        lassign [charge_to_color $charge $min_charge $max_charge] red green blue
-        
-        # Convert RGB values to hex color
-        set color [format "#%02x%02x%02x" \
-            [expr {int($red * 255)}] \
-            [expr {int($green * 255)}] \
-            [expr {int($blue * 255)}]]
-        
-        # Draw vertical line of the gradient
-        $colorbar.canvas create line $i 20 $i 50 -fill $color
-    }
-    
-    # Add tick marks and labels
-    set num_ticks 5
-    set tick_interval [expr {300.0 / ($num_ticks - 1)}]
-    set charge_interval [expr {($max_charge - $min_charge) / ($num_ticks - 1)}]
-    
-    for {set i 0} {$i < $num_ticks} {incr i} {
-        set x [expr {$i * $tick_interval}]
-        set charge [expr {$min_charge + $i * $charge_interval}]
-        
-        # Draw tick mark
-        $colorbar.canvas create line $x 50 $x 60 -width 2
-        
-        # Add label
-        $colorbar.canvas create text $x 70 -anchor c \
-            -text [format "%.3f" $charge]
-    }
-}
-
-# Set final coloring and materials
 mol modcolor 0 top User
 mol modmaterial 0 top Opaque
 mol modcolor 1 top User
@@ -164,8 +112,5 @@ mol modmaterial 1 top Opaque
 # Center and reset view
 display resetview
 display update
-
-# Create the color bar
-create_colorbar $min_charge $max_charge
 
 puts "Visualization completed with charge range: $min_charge to $max_charge"
