@@ -99,6 +99,8 @@ mol addrep top
 mol modmaterial 5 top Opaque
 
 # Process each frame
+# set numFrames [molinfo top get numframes]
+# for {set frame 0} {$frame < $numFrames} {incr frame} {
 for {set frame 0} {$frame < 10} {incr frame} {
     # Move to current frame
     animate goto $frame
