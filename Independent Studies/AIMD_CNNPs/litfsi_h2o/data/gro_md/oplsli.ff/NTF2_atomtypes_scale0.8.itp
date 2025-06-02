@@ -1,0 +1,8 @@
+[ atomtypes ]
+;  type    mass      charge ptype  sigma(nm) epsilon(kJ/mol) sigma(Ang.) epsilon(kcal/mol)
+F1     18.998    -0.128    A    0.295    0.22175    ;    2.95    0.053
+CBT    12.011     0.28     A    0.350    0.27614    ;    3.5     0.066
+SBT    32.066     0.816    A    0.355    1.04600    ;    3.55    0.25
+OBT    15.999    -0.424    A    0.296    0.87864    ;    2.96    0.21
+NBT    14.0      -0.528    A    0.325    0.71128    ;    3.25    0.17
+
