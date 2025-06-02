@@ -1,0 +1,26 @@
+; nvt.mdp - NVT Equilibration
+integrator  = md
+dt          = 0.001         ; Your npt.mdp uses 0.001 ps, so keep consistent
+nsteps      = 100000        ; 100 ps (100000 * 0.001 ps)
+nstxout     = 1000          ; Save coordinates every 1 ps
+nstvout     = 1000
+nstfout     = 1000
+nstlog      = 1000
+nstenergy   = 1000
+cutoff-scheme = Verlet
+coulombtype = PME
+rcoulomb    = 1.0           ; Consistent with em.mdp and npt.mdp
+vdwtype     = PME           ; Use PME for VdW in NVT/NPT for consistency with long-range electrostatics
+rvdw        = 1.0           ; Consistent with em.mdp and npt.mdp
+pbc         = xyz
+tcoupl      = v-rescale
+tc_grps     = System
+tau_t       = 1.0           ; Consistent with npt.mdp
+ref_t       = 298.15        ; Consistent with npt.mdp
+gen_vel     = yes
+gen_temp    = 298.15
+gen_seed    = -1
+constraints = hbonds        ; Consistent with npt.mdp
+constraint_algorithm = lincs ; Consistent with npt.mdp
+lincs_iter = 2              ; Consistent with npt.mdp
+lincs_order = 4             ; Consistent with npt.mdp
