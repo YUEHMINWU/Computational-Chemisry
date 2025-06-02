@@ -1,4 +1,4 @@
-Run the GROMACS MD simulation
+The commands of running the GROMACS MD simulation
 
 Run energy minimizer:
 gmx grompp -f em.mdp -c litfsi_h2o.pdb -p litfsi_h2o.top -o em.tpr -maxwarn 1
