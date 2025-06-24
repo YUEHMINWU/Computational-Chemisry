@@ -1,2 +1,2 @@
 ffbonded.itp, ffnonbonded.itp, spec.itp and ions.itp are from built-in gromacs oplsaa forcefield, so you need to copy it from your homebrew directory of gromacs. I suppose the path for all the forcefiled files is "/opt/homebrew/Cellar/gromacs/2025.1/share/gromacs/top/oplsaa.ff/"
-The ILs ff are from the website "https://github.com/orlandoacevedo/IL"
+The ILs ff are from the website "https://github.com/orlandoacevedo/IL", "https://github.com/vladislavivanistsev/RTIL-FF"
