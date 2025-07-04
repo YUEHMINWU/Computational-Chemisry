@@ -1,8 +1,13 @@
 import os
 import subprocess
-import shutil
 import argparse
 import sys
+from ase import Atoms
+from ase.data import atomic_masses, atomic_numbers  # MODIFIED LINE: Import ASE data
+
+# Define simulation box and atom types
+CELL_SIZE = 14.936  # Angstrom
+ATOM_TYPES = ["H", "O", "Li", "F", "S", "C", "N"]
 
 
 def is_jupyter():
@@ -13,138 +18,263 @@ def is_jupyter():
         return False
 
 
-def generate_cp2k_input(label, data_dir, log_dir, template_file="aimd.inp"):
-    template_path = os.path.join(data_dir, template_file)
-    if not os.path.exists(template_path):
-        raise FileNotFoundError(f"CP2K input template not found: {template_path}")
+def read_xyz_manual(xyz_file):
+    """Read XYZ file to create ASE Atoms object."""
+    with open(xyz_file, "r") as f:
+        lines = f.readlines()
+    natoms = int(lines[0].strip())
+    if natoms != 244:
+        raise ValueError(f"Expected 244 atoms, but found {natoms} in {xyz_file}")
 
-    # Copy the template input file to results directory
-    inp_file = os.path.join(log_dir, f"{label}.inp")
-    shutil.copyfile(template_path, inp_file)
+    symbols = []
+    positions = []
+    for i, line in enumerate(lines[2 : 2 + natoms], 1):
+        parts = line.strip().split()
+        if len(parts) < 4:
+            raise ValueError(f"Invalid XYZ line {i}: {line.strip()}")
+        symbol = parts[0]
+        if symbol not in ATOM_TYPES:
+            raise ValueError(
+                f"Atom {i} has unexpected symbol {symbol}. Expected: {ATOM_TYPES}"
+            )
+        symbols.append(symbol)
+        positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
 
-    with open(os.path.join(log_dir, "cp2k_input.log"), "w") as f:
-        f.write(f"Copied CP2K input file: {inp_file}\n")
-        f.write(f"Template used: {template_path}\n")
-        with open(inp_file, "r") as inp_f:
-            f.write(inp_f.read())
-
-    dftd3_src = "/opt/homebrew/share/cp2k/data/dftd3.dat"
-    dftd3_dst = os.path.join(log_dir, "dftd3.dat")
-    if os.path.exists(dftd3_src):
-        shutil.copyfile(dftd3_src, dftd3_dst)
-    else:
-        raise FileNotFoundError(f"DFT-D3 parameter file not found: {dftd3_src}")
-
-    return inp_file
+    atoms = Atoms(symbols=symbols, positions=positions)
+    return atoms
 
 
-def run_aimd(
-    pdb_file,
-    label="litfsi_h2o_relax",
-    sim_time=5.0,
+def write_lammps_data_manual(fd, atoms, specorder, cell_size=CELL_SIZE):
+    """Write LAMMPS data file."""
+    symbols = atoms.get_chemical_symbols()
+    positions = atoms.get_positions()
+    symbol_to_type = {symbol: idx + 1 for idx, symbol in enumerate(specorder)}
+
+    with open(fd, "w") as f:
+        f.write("LAMMPS data file\n\n")
+        f.write(f"{len(atoms)} atoms\n")
+        f.write(f"{len(specorder)} atom types\n\n")
+        f.write(f"0.0 {cell_size} xlo xhi\n")
+        f.write(f"0.0 {cell_size} ylo yhi\n")
+        f.write(f"0.0 {cell_size} zlo zhi\n\n")
+        f.write("Atoms\n\n")
+        for i, (symbol, pos) in enumerate(zip(symbols, positions)):
+            atom_type = symbol_to_type[symbol]
+            f.write(f"{i + 1} {atom_type} {pos[0]:.6f} {pos[1]:.6f} {pos[2]:.6f}\n")
+
+
+def convert_xyz_to_lammps_data(
+    xyz_file, lammps_data_file, atom_types=ATOM_TYPES, cell_size=CELL_SIZE
+):
+    """Convert XYZ file to LAMMPS data file."""
+    if not os.path.isfile(xyz_file):
+        raise FileNotFoundError(f"XYZ file not found: {xyz_file}")
+
+    atoms = read_xyz_manual(xyz_file)
+    if len(atoms) != 244:
+        raise ValueError(f"Expected 244 atoms, but read {len(atoms)} from {xyz_file}")
+
+    atoms.set_cell([cell_size, cell_size, cell_size])
+    atoms.set_pbc([True, True, True])
+    write_lammps_data_manual(lammps_data_file, atoms, atom_types)
+    print(f"Converted {xyz_file} to {lammps_data_file}")
+
+
+def generate_lammps_input(
+    label,
+    data_dir,
+    log_dir,
+    results_dir,
+    lammps_data_file,
+    model_file,
+    atom_types=ATOM_TYPES,
+    cell_size=CELL_SIZE,
+    steps=200000,
+    timestep=0.5,
+    temperature=298.0,
+    thermostat_damping=100.0,
+):
+    """Generate LAMMPS input script for MLPMD simulation."""
+    input_script = os.path.join(log_dir, f"{label}.in")
+    output_pos = os.path.join(results_dir, f"{label}-pos.xyz")
+    output_vel = os.path.join(results_dir, f"{label}-vel.xyz")
+    output_frc = os.path.join(results_dir, f"{label}-frc.xyz")
+
+    # MODIFIED BLOCK: Generate mass commands for the input script
+    mass_commands = ""
+    for i, symbol in enumerate(atom_types):
+        atom_type_index = i + 1
+        mass = atomic_masses[atomic_numbers[symbol]]
+        mass_commands += f"mass {atom_type_index} {mass:.4f}\n"
+
+    lammps_input_content = f"""
+# LAMMPS input script for MLPMD with Allegro model
+units metal
+atom_style atomic
+newton on
+dimension 3
+boundary p p p
+
+# Read LAMMPS data file
+read_data {lammps_data_file}
+
+# if you want to run a larger system, simply replicate the system in space
+# replicate 3 3 3
+
+# MODIFIED BLOCK: Set masses for each atom type
+{mass_commands}
+
+# Pair style for Allegro
+pair_style allegro
+pair_coeff * * {model_file} {" ".join(atom_types)}
+
+# Neighbor list settings
+neighbor 1.0 bin
+neigh_modify delay 5 every 1
+
+# Set timestep
+timestep {timestep}
+
+# NVT ensemble with Nosé-Hoover
+fix 1 all nvt temp {temperature} {temperature} {thermostat_damping}
+thermo 10
+thermo_style custom step temp pe ke etotal
+
+# Output trajectory, velocities, and forces
+dump pos all xyz 1 {output_pos}
+dump_modify pos element {" ".join(atom_types)}
+dump vel all custom 1 {output_vel} id type vx vy vz
+dump frc all custom 1 {output_frc} id type fx fy fz
+
+# Run simulation
+run {steps}
+"""
+    with open(input_script, "w") as f:
+        f.write(lammps_input_content)
+
+    with open(os.path.join(log_dir, "lammps_input.log"), "w") as f:
+        f.write(f"Generated LAMMPS input file: {input_script}\n")
+        f.write(lammps_input_content)
+
+    return input_script
+
+
+def run_mlpmd(
+    xyz_file,
+    label="litfsi_h2o_allegro",
+    sim_time=100.0,
     timestep=0.5,
     data_dir="../data",
-    results_dir="/Users/yue-minwu/Ind_Stud/AIMD_CNNP/litfsi_h2o/results/",
-    log_dir="../logs/",
+    results_dir="../results",
+    log_dir="../logs",
     np_processes=9,
+    model_file="../results/allegro_model_output/deployed.nequip.pth",
+    atom_types=ATOM_TYPES,
+    cell_size=CELL_SIZE,
+    temperature=298.0,
+    thermostat_damping=100.0,
 ):
+    """Run MLPMD simulation using LAMMPS."""
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
 
-    # Calculate steps
-    steps_per_ps = 1000 / timestep  # fs per ps / timestep (10000 steps/ps for 0.10 fs)
-    sim_steps = int(sim_time * steps_per_ps)  # e.g., 1000 steps for 1 ps
-    print(sim_steps)
+    steps_per_ps = 1000 / timestep
+    sim_steps = int(sim_time * steps_per_ps)
+    print(f"Simulation steps: {sim_steps}")
 
-    # Generate and run CP2K input
-    inp_file = os.path.abspath(generate_cp2k_input(label, data_dir, log_dir))
+    lammps_data_file = os.path.join(data_dir, f"{label}.data")
+    convert_xyz_to_lammps_data(xyz_file, lammps_data_file, atom_types, cell_size)
+
+    input_file = os.path.abspath(
+        generate_lammps_input(
+            label,
+            data_dir,
+            log_dir,
+            results_dir,
+            lammps_data_file,
+            model_file,
+            atom_types,
+            cell_size,
+            sim_steps,
+            timestep,
+            temperature,
+            thermostat_damping,
+        )
+    )
     out_file = os.path.join(log_dir, f"{label}.out")
 
-    cp2k_psmp = "/opt/homebrew/bin/cp2k.psmp"
-    wrapper_script = os.path.join(
-        os.path.dirname(__file__), "../../cp2k_shell_wrapper.sh"
-    )
+    # This points to the correct executable you built
+    lammps_exec = "/Users/yue-minwu/Ind_Stud/AIMD_CNNP/lammps/build/lmp"
+    if not os.path.isfile(lammps_exec):
+        raise FileNotFoundError(f"LAMMPS executable not found: {lammps_exec}")
 
-    if not os.path.isfile(cp2k_psmp):
-        raise FileNotFoundError(f"CP2K binary not found: {cp2k_psmp}")
-    if not os.path.isfile(wrapper_script):
-        raise FileNotFoundError(f"CP2K wrapper script not found: {wrapper_script}")
-
+    # The 'mpirun' command from your conda environment will be used automatically
     cmd = [
         "mpirun",
         "-np",
         str(np_processes),
-        wrapper_script,
-        "-i",
-        inp_file,
-        "-o",
+        lammps_exec,
+        "-in",
+        input_file,
+        "-log",
         out_file,
     ]
-    env = os.environ.copy()
-    env["DYLD_LIBRARY_PATH"] = "/opt/homebrew/lib:/opt/openmpi/lib:" + env.get(
-        "DYLD_LIBRARY_PATH", ""
-    )
-    env["CP2K_DATA_DIR"] = "/opt/homebrew/share/cp2k/data"
-    env["OMPI_MCA_btl_tcp_port_min_v4"] = "10000"
-    env["OMPI_MCA_btl_tcp_port_range_v4"] = "1000"
 
-    print(f"Executing CP2K command: {' '.join(cmd)}")
+    env = os.environ.copy()
+
+    print(f"Executing LAMMPS command: {' '.join(cmd)}")
     try:
+        working_dir = os.path.dirname(input_file)
         result = subprocess.run(
-            cmd, env=env, check=True, capture_output=True, text=True
+            cmd, env=env, check=True, capture_output=True, text=True, cwd=working_dir
         )
-        with open(os.path.join(log_dir, "cp2k_wrapper.log"), "w") as f:
-            f.write(f"CP2K command: {' '.join(cmd)}\n")
-            f.write(f"CP2K stdout:\n{result.stdout}\n")
-            f.write(f"CP2K stderr:\n{result.stderr}\n")
-            f.write(f"Using binary: {cp2k_psmp}\n")
+        with open(os.path.join(log_dir, "lammps_wrapper.log"), "w") as f:
+            f.write(f"LAMMPS command: {' '.join(cmd)}\n")
+            f.write(f"LAMMPS stdout:\n{result.stdout}\n")
+            f.write(f"LAMMPS stderr:\n{result.stderr}\n")
+            f.write(f"Using binary: {lammps_exec}\n")
     except subprocess.CalledProcessError as e:
-        error_msg = f"CP2K simulation failed: {e}\nCommand: {' '.join(cmd)}\nStdout: {e.stdout}\nStderr: {e.stderr}"
-        raise RuntimeError(error_msg)
+        # Print the LAMMPS log file for easier debugging
+        print(f"--- LAMMPS Log File ({out_file}) ---")
+        if os.path.exists(out_file):
+            with open(out_file, "r") as log:
+                print(log.read())
+        else:
+            print("Log file not found.")
+        print("--- End Log File ---")
+        raise RuntimeError(
+            f"LAMMPS simulation failed. See log for details. Error: {e.stderr}"
+        )
 
 
 def main():
     if is_jupyter():
-        # Set default arguments for Jupyter
         args = argparse.Namespace(
-            pdb_file="../data/gro_md/final_npt_elements.pdb  ",
-            sim_time=5.0,
+            xyz_file="../results/litfsi_h2o_relax-pos.xyz",
+            sim_time=100.0,
             np_processes=9,
         )
     else:
-        # Parse command-line arguments, ignoring Jupyter-specific ones
-        parser = argparse.ArgumentParser(
-            description="Run AIMD simulation with CP2K", add_help=False
+        parser = argparse.ArgumentParser(description="Run MLPMD simulation with LAMMPS")
+        parser.add_argument(
+            "--xyz_file",
+            default="../results/litfsi_h2o_relax-pos.xyz",
+            help="Path to XYZ file",
         )
         parser.add_argument(
-            "--pdb_file", default="../data/li_ec_lio_bond.pdb", help="Path to PDB file"
+            "--sim_time", type=float, default=100.0, help="Simulation time in ps"
         )
         parser.add_argument(
-            "--sim_time", type=float, default=1.0, help="Simulation time in ps"
+            "--np_processes", type=int, default=9, help="Number of MPI processes"
         )
+        args = parser.parse_args()
 
-        parser.add_argument(
-            "--np_processes", type=int, default=8, help="Number of MPI processes"
-        )
-        parser.add_argument(
-            "-h",
-            "--help",
-            action="help",
-            default=argparse.SUPPRESS,
-            help="Show this help message and exit",
-        )
-
-        # Filter out Jupyter-specific arguments
-        known_args = [arg for arg in sys.argv[1:] if not arg.startswith("--f=")]
-        args, unknown = parser.parse_known_args(known_args)
-
-    traj = run_aimd(
-        args.pdb_file,
+    run_mlpmd(
+        args.xyz_file,
         sim_time=args.sim_time,
         np_processes=args.np_processes,
     )
-    return traj
 
 
 if __name__ == "__main__":
