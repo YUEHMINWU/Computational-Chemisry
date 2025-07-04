@@ -1,18 +1,28 @@
 import os
 import subprocess
 import glob
-from ase.io import write as ase_write
-import numpy as np
 import yaml
 import sys
-from concurrent.futures import ProcessPoolExecutor
-from trajectory_utils import read_xyz_frames, process_trajectory_chunk
+from trajectory_utils import convert_cp2k_to_traj
 
 # Configuration Parameters
-CP2K_OUTPUT_DIR = "../results"
-CP2K_PROJECT_NAME = "litfsi_h2o_relax"
-ENERGY_FILE = "../main/litfsi_h2o_relax-1.ener"
-TRAJ_DATA_FILE = "aimd_trajectory.extxyz"
+CP2K_RUNS = [
+    {
+        "pos": "../results/litfsi_h2o_relax-pos.xyz",
+        "frc": "../results/litfsi_h2o_relax-frc.xyz",
+        "ener": "../main/litfsi_h2o_relax-1.ener",
+        "start_step": 0,
+        "end_step": 7500,
+    },
+    {
+        "pos": "../results/litfsi_h2o_prod_re7500-pos.xyz",
+        "frc": "../results/litfsi_h2o_prod_re7500-frc.xyz",
+        "ener": "../main/litfsi_h2o_prod_re7500-1.ener",
+        "start_step": 7501,
+        "end_step": 20586,
+    },
+]
+TRAJ_DATA_FILE = "aimd_trajectory_combined.extxyz"
 ALLEGRO_TRAINED_MODEL_DIR = "../results/allegro_model_output"
 ALLEGRO_DEPLOYED_MODEL_NAME = "deployed.nequip.pth"
 TOTAL_FRAMES_TO_USE = 50
@@ -22,96 +32,6 @@ MAX_EPOCHS = 5
 FORCE_COEFF = 1.0
 BATCH_SIZE = 5
 NUM_WORKERS = 9
-
-
-def count_xyz_frames(filename):
-    """Count the number of frames in an XYZ file."""
-    with open(filename, "r") as f:
-        lines = f.readlines()
-        atom_count = int(lines[0].strip())
-        total_lines_per_frame = atom_count + 2
-        return len(lines) // total_lines_per_frame
-
-
-def convert_cp2k_to_traj(
-    output_dir, project_name, energy_file, traj_file, total_frames_to_use
-):
-    print(
-        f"--- Step 1: Converting {total_frames_to_use} random CP2K frames to {traj_file} ---"
-    )
-    pos_file = os.path.join(output_dir, f"{project_name}-pos.xyz")
-    force_file = os.path.join(output_dir, f"{project_name}-frc.xyz")
-
-    for file_path in [pos_file, energy_file, force_file]:
-        if not os.path.exists(file_path):
-            print(f"Error: File '{file_path}' not found.")
-            sys.exit(1)
-
-    try:
-        # Load energy data once
-        energies_data = np.loadtxt(energy_file, skiprows=1, dtype=np.float32)
-        if energies_data.ndim == 1:
-            energies_data = energies_data.reshape(1, -1)
-
-        # Read all position and force frames
-        pos_frames = read_xyz_frames(pos_file)
-        force_frames = read_xyz_frames(force_file)
-
-        # Determine the number of available frames
-        num_frames = min(len(pos_frames), len(force_frames), energies_data.shape[0])
-
-        # Select random frames or all if fewer are available
-        if num_frames < total_frames_to_use:
-            print(f"Warning: Only {num_frames} frames available, using all.")
-            selected_indices = np.arange(num_frames)
-        else:
-            np.random.seed(123)  # For reproducibility
-            selected_indices = np.random.choice(
-                num_frames, size=total_frames_to_use, replace=False
-            )
-
-        # Extract selected frames and energies
-        selected_pos_frames = [pos_frames[i] for i in selected_indices]
-        selected_force_frames = [force_frames[i] for i in selected_indices]
-        selected_energies_hartree = energies_data[selected_indices, 4].astype(
-            np.float32
-        )
-
-        # Split into chunks for parallel processing
-        index_chunks = np.array_split(np.arange(len(selected_indices)), NUM_WORKERS)
-        frame_data_chunks = []
-        for chunk in index_chunks:
-            chunk_data = [
-                (
-                    selected_pos_frames[j],
-                    selected_force_frames[j],
-                    selected_energies_hartree[j],
-                )
-                for j in chunk
-            ]
-            frame_data_chunks.append(chunk_data)
-
-        # Process chunks in parallel
-        with ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
-            results = executor.map(process_trajectory_chunk, frame_data_chunks)
-
-        # Collect results
-        all_atoms = []
-        for chunk in results:
-            all_atoms.extend(chunk)
-
-        if not all_atoms:
-            print("Error: No frames processed successfully.")
-            sys.exit(1)
-
-        # Write to .extxyz file
-        ase_write(traj_file, all_atoms, format="extxyz")
-
-        print(f"Converted {len(all_atoms)} frames to {traj_file}")
-
-    except Exception as e:
-        print(f"Error during conversion: {e}")
-        sys.exit(1)
 
 
 def prepare_allegro_config(
@@ -124,7 +44,6 @@ def prepare_allegro_config(
     batch_size,
 ):
     print("--- Step 2: Preparing Allegro config ---")
-
     chemical_symbols_yaml = "[" + ", ".join(f'"{e}"' for e in elements) + "]"
     data_file_path = os.path.abspath(data_file)
 
@@ -150,13 +69,13 @@ data:
       r_max: ${{cutoff_radius}}
   train_dataloader:
     _target_: torch.utils.data.DataLoader
-    batch_size: 1
+    batch_size: {batch_size}
     shuffle: true
-    num_workers: 5
+    num_workers: {NUM_WORKERS}
   val_dataloader:
     _target_: torch.utils.data.DataLoader
-    batch_size: 5
-    num_workers: 5
+    batch_size: {batch_size}
+    num_workers: {NUM_WORKERS}
     persistent_workers: true
   test_dataloader: ${{data.val_dataloader}}
   stats_manager:
@@ -185,7 +104,7 @@ training_module:
     per_atom_energy: true
     coeffs:
       total_energy: 1.0
-      forces: 1.0
+      forces: {force_coeff}
   val_metrics:
     _target_: nequip.train.EnergyForceMetrics
     coeffs:
@@ -279,27 +198,18 @@ def train_allegro_model(config_path):
             print("Training STDERR:", result.stderr)
 
         # Locate the last.ckpt file
-        checkpoint_pattern = os.path.join(
-            "/Users/yue-minwu/Ind_Stud/AIMD_CNNP/litfsi_h2o/main/outputs/",
-            "*",
-            "*",
-            "last.ckpt",
-        )
-        checkpoint_files = glob.glob(checkpoint_pattern)
+        checkpoint_pattern = os.path.join(os.getcwd(), "outputs", "*", "*", "last.ckpt")
+        checkpoint_files = glob.glob(checkpoint_pattern, recursive=True)
 
         if not checkpoint_files:
             print(f"Error: No last.ckpt file found in {checkpoint_pattern}.")
             sys.exit(1)
 
-        # Use the most recent last.ckpt file (in case multiple exist)
+        # Use the most recent last.ckpt file
         last_checkpoint = max(checkpoint_files, key=os.path.getmtime)
         deployed_model_path = os.path.join(
             ALLEGRO_TRAINED_MODEL_DIR, ALLEGRO_DEPLOYED_MODEL_NAME
         )
-
-        if not os.path.exists(last_checkpoint):
-            print(f"Error: Checkpoint file {last_checkpoint} not found.")
-            sys.exit(1)
 
         print(f"Using checkpoint: {last_checkpoint}")
 
@@ -343,9 +253,7 @@ if __name__ == "__main__":
     os.makedirs(ALLEGRO_TRAINED_MODEL_DIR, exist_ok=True)
 
     convert_cp2k_to_traj(
-        CP2K_OUTPUT_DIR,
-        CP2K_PROJECT_NAME,
-        ENERGY_FILE,
+        CP2K_RUNS,
         TRAJ_DATA_FILE,
         TOTAL_FRAMES_TO_USE,
     )
@@ -361,8 +269,12 @@ if __name__ == "__main__":
     )
 
     final_model_path = train_allegro_model(allegro_config_path)
+
     final_model_path = deploy_allegro_model(
         ALLEGRO_TRAINED_MODEL_DIR, ALLEGRO_DEPLOYED_MODEL_NAME
     )
+
+    print(f"\nTraining and deployment complete. Model saved to: {final_model_path}")
+
 
     print(f"\nTraining and deployment complete. Model saved to: {final_model_path}")
