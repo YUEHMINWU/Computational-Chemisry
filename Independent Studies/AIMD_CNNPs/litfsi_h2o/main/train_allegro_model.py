@@ -19,16 +19,23 @@ CP2K_RUNS = [
         "frc": "../results/litfsi_h2o_prod_re7500-frc.xyz",
         "ener": "../main/litfsi_h2o_prod_re7500-1.ener",
         "start_step": 7501,
-        "end_step": 20586,
+        "end_step": 20500,
+    },
+    {
+        "pos": "../results/litfsi_h2o_prod_re20500-pos.xyz",
+        "frc": "../results/litfsi_h2o_prod_re20500-frc.xyz",
+        "ener": "../main/litfsi_h2o_prod_re20500-1.ener",
+        "start_step": 20501,
+        "end_step": 60000,
     },
 ]
-TRAJ_DATA_FILE = "aimd_trajectory_combined.extxyz"
+TRAJ_DATA_FILE = "aimd_trajectory.extxyz"
 ALLEGRO_TRAINED_MODEL_DIR = "../results/allegro_model_output"
 ALLEGRO_DEPLOYED_MODEL_NAME = "deployed.nequip.pth"
-TOTAL_FRAMES_TO_USE = 50
+TOTAL_FRAMES_TO_USE = 10000
 SYSTEM_ELEMENTS = ["Li", "F", "S", "O", "C", "N", "H"]
 CUTOFF_RADIUS = 6.0
-MAX_EPOCHS = 5
+MAX_EPOCHS = 1000
 FORCE_COEFF = 1.0
 BATCH_SIZE = 5
 NUM_WORKERS = 9
@@ -69,13 +76,13 @@ data:
       r_max: ${{cutoff_radius}}
   train_dataloader:
     _target_: torch.utils.data.DataLoader
-    batch_size: {batch_size}
+    batch_size: 1
     shuffle: true
-    num_workers: {NUM_WORKERS}
+    num_workers: 5
   val_dataloader:
     _target_: torch.utils.data.DataLoader
-    batch_size: {batch_size}
-    num_workers: {NUM_WORKERS}
+    batch_size: 5
+    num_workers: 5
     persistent_workers: true
   test_dataloader: ${{data.val_dataloader}}
   stats_manager:
@@ -148,7 +155,7 @@ training_module:
     per_type_energy_shifts_trainable: false
     pair_potential:
       _target_: nequip.nn.pair_potential.ZBL
-      units: metal
+      units: real
       chemical_species: ${{chemical_symbols}}
 
 global_options:
@@ -273,8 +280,5 @@ if __name__ == "__main__":
     final_model_path = deploy_allegro_model(
         ALLEGRO_TRAINED_MODEL_DIR, ALLEGRO_DEPLOYED_MODEL_NAME
     )
-
-    print(f"\nTraining and deployment complete. Model saved to: {final_model_path}")
-
 
     print(f"\nTraining and deployment complete. Model saved to: {final_model_path}")
