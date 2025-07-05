@@ -6,10 +6,11 @@ from io import StringIO
 import sys
 from concurrent.futures import ProcessPoolExecutor
 
-# Constants
-HARTREE_TO_EV = 27.2113862459
+# Constants for "real" units (kcal/mol, Angstrom)
+HARTREE_TO_KCAL_MOL = 627.50960803
 BOHR_TO_ANGSTROM = 0.5291772109
-FORCE_CONVERSION_FACTOR = 51.4220861906
+# Conversion for forces: (Hartree/Bohr) -> (kcal/mol/Angstrom)
+FORCE_CONVERSION_FACTOR = HARTREE_TO_KCAL_MOL / BOHR_TO_ANGSTROM
 CELL_EDGE_LENGTH = 14.936
 CUBIC_CELL = [CELL_EDGE_LENGTH] * 3
 
@@ -51,7 +52,9 @@ def process_trajectory_chunk(frame_data):
         try:
             # Parse position data
             pos_atoms = read(StringIO(pos_string), format="xyz")
-            energy_ev = float(energy_hartree) * HARTREE_TO_EV
+
+            # Parse energy data
+            energy_kcal_mol = float(energy_hartree) * HARTREE_TO_KCAL_MOL
 
             # Parse force data
             force_lines = force_string.strip().split("\n")
@@ -66,14 +69,11 @@ def process_trajectory_chunk(frame_data):
             force_data = []
             for line in force_lines[2 : 2 + n_atoms]:
                 parts = line.split()
-                # ⬇️ *** CORRECTED LINE *** ⬇️
-                # Changed the column check from 7 to 4 to match the input file format.
                 if len(parts) < 4:
                     raise ValueError(
                         f"Line has {len(parts)} columns, expected at least 4: {line}"
                     )
                 try:
-                    # The logic to grab the last 3 elements is correct and needs no change.
                     force_components = [float(x) for x in parts[-3:]]
                 except ValueError as e:
                     raise ValueError(
@@ -82,7 +82,7 @@ def process_trajectory_chunk(frame_data):
                 force_data.append(force_components)
 
             forces_hartree_bohr = np.array(force_data, dtype=np.float32)
-            forces_ev_angstrom = forces_hartree_bohr * FORCE_CONVERSION_FACTOR
+            forces_kcal_mol_angstrom = forces_hartree_bohr * FORCE_CONVERSION_FACTOR
 
             # Create Atoms object
             atoms = Atoms(
@@ -90,8 +90,8 @@ def process_trajectory_chunk(frame_data):
                 positions=pos_atoms.positions.astype(np.float32),
             )
             atoms.set_cell(CUBIC_CELL)
-            atoms.arrays["forces"] = forces_ev_angstrom
-            atoms.info["energy"] = float(energy_ev)
+            atoms.arrays["forces"] = forces_kcal_mol_angstrom
+            atoms.info["energy"] = float(energy_kcal_mol)
             atoms.info["step"] = int(step)
             atoms.set_pbc(True)
             processed_atoms.append(atoms)
@@ -112,7 +112,6 @@ def convert_cp2k_to_traj(run_data_list, output_traj_file, total_frames_to_use):
             run_info["frc"],
             run_info["ener"],
         )
-        # Corrected typo from "start seeming" to "start_step"
         start_step, end_step = run_info.get("start_step"), run_info.get("end_step")
 
         print(f" > Processing run {i + 1}: {os.path.basename(pos_file)}")
@@ -153,12 +152,9 @@ def convert_cp2k_to_traj(run_data_list, output_traj_file, total_frames_to_use):
     sampled_frame_data = [frame_data[i] for i in sorted(indices)]
 
     # Process in parallel
-    # Replaced np.array_split with a standard list comprehension for chunking
     num_procs = min(len(sampled_frame_data), 9)
     if num_procs > 0:
-        chunk_size = (
-            len(sampled_frame_data) + num_procs - 1
-        ) // num_procs  # Ensure all frames are processed
+        chunk_size = (len(sampled_frame_data) + num_procs - 1) // num_procs
         chunks = [
             sampled_frame_data[i : i + chunk_size]
             for i in range(0, len(sampled_frame_data), chunk_size)
