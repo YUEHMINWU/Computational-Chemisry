@@ -90,7 +90,7 @@ def generate_lammps_input(
     atom_types=ATOM_TYPES,
     cell_size=CELL_SIZE,
     steps=200000,
-    timestep=0.5,
+    timestep=0.0005, # unit ps
     temperature=298.0,
     thermostat_damping=100.0,
 ):
