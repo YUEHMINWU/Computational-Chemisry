@@ -129,7 +129,7 @@ pair_style allegro
 pair_coeff * * {model_file} {" ".join(atom_types)}
 
 # Neighbor list settings
-neighbor 1.0 bin
+neighbor 2.0 bin
 neigh_modify delay 5 every 1
 
 # Set timestep
@@ -137,7 +137,7 @@ timestep {timestep}
 
 # NVT ensemble with Nosé-Hoover
 fix 1 all nvt temp {temperature} {temperature} {thermostat_damping}
-thermo 10
+thermo 100
 thermo_style custom step temp pe ke etotal
 
 # Output trajectory, velocities, and forces
