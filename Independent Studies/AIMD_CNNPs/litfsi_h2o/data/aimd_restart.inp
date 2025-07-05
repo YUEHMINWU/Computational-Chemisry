@@ -38,15 +38,6 @@
             &END EACH
         &END FORCES
     &END PRINT
-    &PRINT
-      &TRAJECTORY
-        FILENAME =../results/litfsi_h2o_relax.pdb
-        FORMAT PDB
-        &EACH
-          MD 1000
-        &END EACH
-      &END TRAJECTORY
-    &END PRINT
 &END MOTION
 
 &FORCE_EVAL
