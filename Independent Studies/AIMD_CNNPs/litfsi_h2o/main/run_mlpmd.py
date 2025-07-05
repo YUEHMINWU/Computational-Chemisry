@@ -163,7 +163,7 @@ def run_mlpmd(
     xyz_file,
     label="litfsi_h2o_allegro",
     sim_time=100.0,
-    timestep=0.5,
+    timestep=0.5, # unit fs
     data_dir="../data",
     results_dir="../results",
     log_dir="../logs",
