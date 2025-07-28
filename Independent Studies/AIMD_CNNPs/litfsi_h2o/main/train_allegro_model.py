@@ -66,9 +66,8 @@ data:
   seed: 123
   split_dataset:
     file_path: {data_file_path}
-    train: 0.8
-    val: 0.1
-    test: 0.1
+    train: 10000
+    val: 1000
   transforms:
     - _target_: nequip.data.transforms.ChemicalSpeciesToAtomTypeMapper
       chemical_symbols: ${{chemical_symbols}}
@@ -84,7 +83,6 @@ data:
     batch_size: 5
     num_workers: 5
     persistent_workers: true
-  test_dataloader: ${{data.val_dataloader}}
   stats_manager:
     _target_: nequip.data.CommonDataStatisticsManager
     type_names: ${{model_type_names}}
