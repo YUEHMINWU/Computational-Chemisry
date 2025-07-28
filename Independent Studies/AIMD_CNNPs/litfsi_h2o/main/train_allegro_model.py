@@ -32,10 +32,10 @@ CP2K_RUNS = [
 TRAJ_DATA_FILE = "aimd_trajectory.extxyz"
 ALLEGRO_TRAINED_MODEL_DIR = "../results/allegro_model_output"
 ALLEGRO_DEPLOYED_MODEL_NAME = "deployed.nequip.pth"
-TOTAL_FRAMES_TO_USE = 11000
+TOTAL_FRAMES_TO_USE = 12000
 SYSTEM_ELEMENTS = ["Li", "F", "S", "O", "C", "N", "H"]
 CUTOFF_RADIUS = 6.0
-MAX_EPOCHS = 1000
+MAX_EPOCHS = 200
 FORCE_COEFF = 1.0
 BATCH_SIZE = 5
 NUM_WORKERS = 9
@@ -68,6 +68,7 @@ data:
     file_path: {data_file_path}
     train: 10000
     val: 1000
+    test: 1000
   transforms:
     - _target_: nequip.data.transforms.ChemicalSpeciesToAtomTypeMapper
       chemical_symbols: ${{chemical_symbols}}
@@ -83,6 +84,7 @@ data:
     batch_size: 5
     num_workers: 5
     persistent_workers: true
+  test_dataloader: ${{data.val_dataloader}}
   stats_manager:
     _target_: nequip.data.CommonDataStatisticsManager
     type_names: ${{model_type_names}}
