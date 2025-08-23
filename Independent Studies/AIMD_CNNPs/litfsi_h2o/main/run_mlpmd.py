@@ -1,5 +1,3 @@
-# This script should be run in the environment where lammps and pair_allegro_allegro.cpp with no conflict of pytorch c++ compiler (change <long> to <int64>). 
-
 import os
 import subprocess
 import argparse
@@ -12,21 +10,13 @@ CELL_SIZE = 14.936  # Angstrom
 ATOM_TYPES = ["H", "O", "Li", "F", "S", "C", "N"]
 
 
-def is_jupyter():
-    try:
-        get_ipython  # noqa: F821
-        return True
-    except NameError:
-        return False
-
-
-def read_xyz_manual(xyz_file):
+def read_xyz_manual(file):
     """Read XYZ file to create ASE Atoms object."""
-    with open(xyz_file, "r") as f:
+    with open(file, "r") as f:
         lines = f.readlines()
     natoms = int(lines[0].strip())
     if natoms != 244:
-        raise ValueError(f"Expected 244 atoms, but found {natoms} in {xyz_file}")
+        raise ValueError(f"Expected 244 atoms, but found {natoms} in {file}")
 
     symbols = []
     positions = []
@@ -84,23 +74,19 @@ def generate_lammps_input(
     results_dir,
     lammps_data_file,
     model_file,
-    eq_steps,
-    prod_steps,
+    md_steps,
     atom_types=ATOM_TYPES,
     timestep=0.5,  # unit fs
     temperature=298.0,
-    thermostat_damping=50.0,  # unit fs
+    thermostat_damping=100.0,  # unit fs
 ):
-    """Generate LAMMPS input script for a two-stage (equilibration/production) MLPMD simulation."""
-    input_script = os.path.join(
-        os.path.dirname(lammps_data_file), f"{label}.in"
-    )  # Save .in file in data_dir
+    """Generate LAMMPS input script for a single-stage MD simulation."""
+    input_script = os.path.join("../logs", f"{label}.in")  # Save .in file in data_dir
 
     # Output file paths
-    eq_pos_file = os.path.join(results_dir, f"{label}-eq-pos.xyz")
-    prod_pos_file = os.path.join(results_dir, f"{label}-prod-pos.xyz")
-    prod_vel_file = os.path.join(results_dir, f"{label}-prod-vel.xyz")
-    prod_frc_file = os.path.join(results_dir, f"{label}-prod-frc.xyz")
+    md_pos_file = os.path.join(results_dir, f"{label}-md-pos.xyz")
+    md_frc_file = os.path.join(results_dir, f"{label}-md-frc.xyz")
+    md_thermo_file = os.path.join(results_dir, f"{label}-md-thermo.log")
 
     mass_commands = ""
     for i, symbol in enumerate(atom_types):
@@ -109,11 +95,11 @@ def generate_lammps_input(
         mass_commands += f"mass {atom_type_index} {mass:.4f} # {symbol}\n"
 
     # Generate a random seed for velocity initialization
-    seed = random.randint(100000, 999999)
+    seed = 656435
 
     lammps_input_content = f"""
 # LAMMPS input script for MLPMD with Allegro model (Real Units)
-# Workflow: Equilibration followed by Production
+# Workflow: Single MD run
 # ----------------------------------------------------------------------------
 # Variable Definitions
 variable        TEMP equal {temperature}
@@ -138,47 +124,35 @@ pair_style      allegro
 pair_coeff      * * {model_file} {" ".join(atom_types)}
 
 # Initialize Velocities
-velocity        all create ${{TEMP}} ${{SEED}} dist gaussian
+velocity        all create ${{TEMP}} ${{SEED}}
 
 # ----------------------------------------------------------------------------
-# 1. Equilibration Run (NVT)
+# MD Run (NVT)
 # ----------------------------------------------------------------------------
 timestep        {timestep}
 fix             1 all nvt temp ${{TEMP}} ${{TEMP}} {thermostat_damping}
 
-thermo_style    custom step temp pe ke etotal econserve temp
-thermo          100 # Log thermodynamics every 1 ps
-
-# Dump trajectory for equilibration
-dump            eq_dump all xyz 100 {eq_pos_file}
-dump_modify     eq_dump element {" ".join(atom_types)}
-
-print "Starting {eq_steps}-step NVT equilibration..."
-run             {eq_steps}
-print "Equilibration complete."
-
-unfix           1
-undump          eq_dump
-
-# ----------------------------------------------------------------------------
-# 2. Production Run (NVT)
-# ----------------------------------------------------------------------------
-reset_timestep  0 # Reset timestep counter to 0 for the production run
-
-fix             2 all nvt temp ${{TEMP}} ${{TEMP}} {thermostat_damping}
-
-thermo_style    custom step pe ke etotal econserve temp vol press
+thermo_style    custom step temp pe ke etotal econserve temp vol press
 thermo          100
 
-# Dump trajectory, velocities, and forces for production
-dump            prod_pos_dump all xyz 100 {prod_pos_file}
-dump_modify     prod_pos_dump element {" ".join(atom_types)}
-dump            prod_vel_dump all custom 100 {prod_vel_file} id type vx vy vz
-dump            prod_frc_dump all custom 100 {prod_frc_file} id type fx fy fz
+# Dump trajectory and forces (custom format with unwrapped positions)
+dump            md_dump_pos all custom 100 {md_pos_file} element xu yu zu
+dump_modify     md_dump_pos element {" ".join(atom_types)} sort id
 
-print "Starting {prod_steps}-step NVT production run..."
-run             {prod_steps}
-print "Production run complete."
+dump            md_dump_frc all custom 100 {md_frc_file} element fx fy fz
+dump_modify     md_dump_frc element {" ".join(atom_types)} sort id
+
+
+# This file is easier to parse than the main log file.
+shell rm -f {md_thermo_file}
+fix             thermo_header all print 1 "Step PotEng Temp" file {md_thermo_file} screen no
+run             0
+unfix           thermo_header
+fix             thermo_out all print 100 "$(step) $(pe) $(temp)" append {md_thermo_file} screen no
+
+print "Starting {md_steps}-step NVT MD run..."
+run             {md_steps}
+print "MD run complete."
 
 # ----------------------------------------------------------------------------
 print "Simulation finished."
@@ -192,31 +166,27 @@ print "Simulation finished."
 def run_mlpmd(
     xyz_file,
     label="litfsi_h2o_allegro",
-    eq_time=200.0,  # Equilibration time in ps
-    prod_time=2000.0,  # Production time in ps
+    md_time=50.0,  # MD time in ps
     timestep=0.5,  # Timestep in fs
     data_dir="../data",
     results_dir="../results",
     log_dir="../logs",
-    np_processes=9,
-    model_file="../results/allegro_model_output/deployed.nequip.pth",
+    np_processes=9,  # OPENMPI = 9 for full usage of cpus
+    model_file="../results/allegro_model_output_primary/deployed.nequip.pth",
     atom_types=ATOM_TYPES,
     temperature=298.0,
-    thermostat_damping=50.0,  # Damping time in fs
+    thermostat_damping=100.0,  # Damping time in fs
 ):
-    """Run a two-stage MLPMD simulation using LAMMPS."""
     os.makedirs(data_dir, exist_ok=True)
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
 
-    # Convert simulation times from ps to steps
+    # Convert simulation time from ps to steps
     steps_per_ps = 1000 / timestep
-    eq_steps = int(eq_time * steps_per_ps)
-    prod_steps = int(prod_time * steps_per_ps)
+    md_steps = int(md_time * steps_per_ps)
 
     print("🚀 Starting MLPMD Simulation Workflow 🚀")
-    print(f"Equilibration: {eq_time} ps ({eq_steps} steps)")
-    print(f"Production:    {prod_time} ps ({prod_steps} steps)")
+    print(f"MD:    {md_time} ps ({md_steps} steps)")
     print(f"Timestep:      {timestep} fs")
     print(f"Temperature:   {temperature} K")
 
@@ -228,8 +198,7 @@ def run_mlpmd(
         os.path.abspath(results_dir),
         os.path.abspath(lammps_data_file),
         os.path.abspath(model_file),
-        eq_steps,
-        prod_steps,
+        md_steps,
         atom_types,
         timestep,
         temperature,
@@ -262,7 +231,7 @@ def run_mlpmd(
             text=True,
             cwd=os.path.abspath(working_dir),
         )
-        print("\n✅ LAMMPS simulation completed successfully. Log file at: {out_file}")
+        print(f"\n✅ LAMMPS simulation completed successfully. Log file at: {out_file}")
     except subprocess.CalledProcessError as e:
         print("\n❌ ERROR: LAMMPS simulation failed.")
         print(f"--- LAMMPS Log File ({out_file}) ---")
@@ -275,51 +244,82 @@ def run_mlpmd(
         raise RuntimeError("LAMMPS simulation failed. Check the log file for details.")
 
 
-def main():
-    if is_jupyter():
-        # Default parameters for Jupyter notebooks
-        args = argparse.Namespace(
-            xyz_file="../results/litfsi_h2o_relax-pos.xyz",
-            eq_time=200.0,  # 200 ps equilibration
-            prod_time=2000.0,  # 2 ns production
-            np_processes=9,
-        )
-    else:
-        parser = argparse.ArgumentParser(
-            description="Run a two-stage MLPMD simulation with LAMMPS"
-        )
-        parser.add_argument(
-            "--xyz_file",
-            default="../results/litfsi_h2o_relax-pos.xyz",
-            help="Path to the initial XYZ structure file.",
-        )
-        parser.add_argument(
-            "--eq_time",
-            type=float,
-            default=200.0,
-            help="Equilibration time in picoseconds (ps).",
-        )
-        parser.add_argument(
-            "--prod_time",
-            type=float,
-            default=2000.0,
-            help="Production simulation time in picoseconds (ps).",
-        )
-        parser.add_argument(
-            "--np_processes",
-            type=int,
-            default=9,
-            help="Number of MPI processes for LAMMPS.",
-        )
-        args = parser.parse_args()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Run a single-stage MD simulation with LAMMPS for AL"
+    )
+    parser.add_argument(
+        "--xyz_file",
+        default="../results/litfsi_h2o_relax-pos.xyz",
+        help="Path to the initial XYZ structure file.",
+    )
+    parser.add_argument(
+        "--md_time",
+        type=float,
+        default=50.0,
+        help="MD time in picoseconds (ps).",
+    )
+    parser.add_argument(
+        "--timestep",
+        type=float,
+        default=0.5,
+        help="Timestep in femtoseconds (fs).",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=298.0,
+        help="Simulation temperature in Kelvin (K).",
+    )
+    parser.add_argument(
+        "--thermostat_damping",
+        type=float,
+        default=100.0,
+        help="Thermostat damping time in femtoseconds (fs).",
+    )
+    parser.add_argument(
+        "--np_processes",
+        type=int,
+        default=9,
+        help="Number of MPI processes for LAMMPS.",
+    )
+    parser.add_argument(
+        "--model_file",
+        default="../results/allegro_model_output_primary/deployed.nequip.pth",
+        help="Path to the Allegro model file.",
+    )
+    parser.add_argument(
+        "--data_dir",
+        default="../data",
+        help="Directory for LAMMPS data files.",
+    )
+    parser.add_argument(
+        "--results_dir",
+        default="../results",
+        help="Directory for simulation output files.",
+    )
+    parser.add_argument(
+        "--log_dir",
+        default="../logs",
+        help="Directory for LAMMPS log files.",
+    )
+    parser.add_argument(
+        "--label",
+        default="litfsi_h2o_allegro",
+        help="Label for output files.",
+    )
+    args = parser.parse_args()
 
     run_mlpmd(
         xyz_file=args.xyz_file,
-        eq_time=args.eq_time,
-        prod_time=args.prod_time,
+        label=args.label,
+        md_time=args.md_time,
+        timestep=args.timestep,
+        data_dir=args.data_dir,
+        results_dir=args.results_dir,
+        log_dir=args.log_dir,
         np_processes=args.np_processes,
+        model_file=args.model_file,
+        temperature=args.temperature,
+        thermostat_damping=args.thermostat_damping,
     )
-
-
-if __name__ == "__main__":
-    main()
