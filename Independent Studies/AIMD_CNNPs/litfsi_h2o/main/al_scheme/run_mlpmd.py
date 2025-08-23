@@ -95,7 +95,7 @@ def generate_lammps_input(
         mass_commands += f"mass {atom_type_index} {mass:.4f} # {symbol}\n"
 
     # Generate a random seed for velocity initialization
-    seed = random.randint(100000, 999999)
+    seed = 656435
 
     lammps_input_content = f"""
 # LAMMPS input script for MLPMD with Allegro model (Real Units)
@@ -124,7 +124,7 @@ pair_style      allegro
 pair_coeff      * * {model_file} {" ".join(atom_types)}
 
 # Initialize Velocities
-velocity        all create ${{TEMP}} ${{SEED}} dist gaussian
+velocity        all create ${{TEMP}} ${{SEED}}
 
 # ----------------------------------------------------------------------------
 # MD Run (NVT)
@@ -145,10 +145,10 @@ dump_modify     md_dump_frc element {" ".join(atom_types)} sort id
 
 # This file is easier to parse than the main log file.
 shell rm -f {md_thermo_file}
-fix             thermo_header all print 1 "Step PotEng" file {md_thermo_file} screen no
+fix             thermo_header all print 1 "Step PotEng Temp" file {md_thermo_file} screen no
 run             0
 unfix           thermo_header
-fix             thermo_out all print 100 "$(step) $(pe)" append {md_thermo_file} screen no
+fix             thermo_out all print 100 "$(step) $(pe) $(temp)" append {md_thermo_file} screen no
 
 print "Starting {md_steps}-step NVT MD run..."
 run             {md_steps}
