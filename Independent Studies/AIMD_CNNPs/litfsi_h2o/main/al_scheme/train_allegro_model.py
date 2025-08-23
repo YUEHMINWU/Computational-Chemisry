@@ -301,42 +301,50 @@ if __name__ == "__main__":
             )
 
         # Primary
-        print("\nTraining primary model")
         primary_dir = "../results/allegro_model_output_primary_iter_0"
-        primary_config_path = prepare_allegro_config(
-            primary_dir,
-            primary_file,
-            SYSTEM_ELEMENTS,
-            CUTOFF_RADIUS,
-            MAX_EPOCHS,
-            FORCE_COEFF,
-            BATCH_SIZE,
-            train_frames_primary,
-            val_frames_primary,
-        )
-        primary_model_path = train_allegro_model(primary_config_path, primary_dir)
-
-        # Ensembles (always use their fixed files and 900/100)
-        train_frames_ensemble = 900
-        val_frames_ensemble = 100
-        for ensemble_id in range(NUM_ENSEMBLES):
-            print(f"\nTraining ensemble model {ensemble_id}")
-            ensemble_dir = f"{ALLEGRO_TRAINED_MODEL_DIR_BASE}_{ensemble_id}"
-            ensemble_file = f"aimd_trajectory_ensemble_{ensemble_id}_train_val.extxyz"
-            ensemble_config_path = prepare_allegro_config(
-                ensemble_dir,
-                ensemble_file,
+        primary_deployed = os.path.join(primary_dir, "deployed.nequip.pth")
+        if os.path.exists(primary_deployed):
+            print("Primary model already trained. Skipping.")
+        else:
+            print("\nTraining primary model")
+            primary_config_path = prepare_allegro_config(
+                primary_dir,
+                primary_file,
                 SYSTEM_ELEMENTS,
                 CUTOFF_RADIUS,
                 MAX_EPOCHS,
                 FORCE_COEFF,
                 BATCH_SIZE,
-                train_frames_ensemble,
-                val_frames_ensemble,
+                train_frames_primary,
+                val_frames_primary,
             )
-            ensemble_model_path = train_allegro_model(
-                ensemble_config_path, ensemble_dir
-            )
+            primary_model_path = train_allegro_model(primary_config_path, primary_dir)
+
+        # Ensembles (always use their fixed files and 900/100)
+        train_frames_ensemble = 900
+        val_frames_ensemble = 100
+        for ensemble_id in range(NUM_ENSEMBLES):
+            ensemble_dir = f"{ALLEGRO_TRAINED_MODEL_DIR_BASE}_{ensemble_id}"
+            ensemble_deployed = os.path.join(ensemble_dir, "deployed.nequip.pth")
+            if os.path.exists(ensemble_deployed):
+                print(f"Ensemble model {ensemble_id} already trained. Skipping.")
+            else:
+                print(f"\nTraining ensemble model {ensemble_id}")
+                ensemble_file = f"aimd_trajectory_ensemble_{ensemble_id}_train_val.extxyz"
+                ensemble_config_path = prepare_allegro_config(
+                    ensemble_dir,
+                    ensemble_file,
+                    SYSTEM_ELEMENTS,
+                    CUTOFF_RADIUS,
+                    MAX_EPOCHS,
+                    FORCE_COEFF,
+                    BATCH_SIZE,
+                    train_frames_ensemble,
+                    val_frames_ensemble,
+                )
+                ensemble_model_path = train_allegro_model(
+                    ensemble_config_path, ensemble_dir
+                )
 
         print("\n" + "=" * 50)
         print("✅ All trainings complete.")
