@@ -95,7 +95,7 @@ def generate_lammps_input(
         mass_commands += f"mass {atom_type_index} {mass:.4f} # {symbol}\n"
 
     # Generate a random seed for velocity initialization
-    seed = 656435
+    seed = 649966
 
     lammps_input_content = f"""
 # LAMMPS input script for MLPMD with Allegro model (Real Units)
