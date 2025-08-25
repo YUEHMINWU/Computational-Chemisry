@@ -6,6 +6,7 @@ from ase.io import read
 import re  # For parsing rmse from output
 import glob
 import time
+import signal
 
 # Configuration
 NUM_ITERATIONS = 10
@@ -18,7 +19,7 @@ ALLEGRO_TRAINED_MODEL_DIR_BASE = "../results/allegro_model_output"
 CHEMICAL_SYMBOLS = ["Li", "F", "S", "O", "C", "N", "H"]
 CUTOFF = 6.0
 NUM_ENSEMBLES = 3
-TARGET_INITIAL_TEMP = 297.99999999999994316
+TARGET_INITIAL_TEMP_STR = "297.99999999999994316"
 
 
 def parse_rmse_from_output(output):
@@ -61,23 +62,17 @@ def all_mlpmd_done(current_iter):
 
 def check_initial_temp(thermo_file):
     if not os.path.exists(thermo_file):
-        return False
+        return None
     with open(thermo_file, "r") as f:
         lines = f.readlines()
     for line in lines:
         if line.startswith("0 "):
             parts = line.split()
-            if len(parts) >= 3:
-                try:
-                    temp = float(parts[2])
-                    if (
-                        abs(temp - TARGET_INITIAL_TEMP) < 1e-10
-                    ):  # Use tolerance for floating point comparison
-                        return True
-                except ValueError:
-                    pass
-            return False
-    return False
+            if len(parts) >= 3 and parts[2] == TARGET_INITIAL_TEMP_STR:
+                return True
+            else:
+                return False
+    return None  # Step 0 not yet written
 
 
 def delete_simulation_files(label):
@@ -189,43 +184,53 @@ def main(start_iter=0):
                         f"{primary_model_dir}/deployed.nequip.pth",
                     ]
 
-                    # Start the process non-blocking
+                    # Start the process non-blocking, in a new session for group killing
                     process = subprocess.Popen(
-                        mlpmd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                        mlpmd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setsid
                     )
 
                     # Monitor thermo_file for initial temp
                     initial_temp_correct = False
                     start_time = time.time()
                     while (
-                        time.time() - start_time < 60
-                    ):  # Timeout after 60 seconds if no file
+                        time.time() - start_time < 120
+                    ):  # Increased timeout to 120 seconds
                         if os.path.exists(thermo_file):
-                            time.sleep(0.5)  # Give time for writing
-                            if check_initial_temp(thermo_file):
+                            time.sleep(5)  # Give time for writing
+                            status = check_initial_temp(thermo_file)
+                            if status is True:
                                 initial_temp_correct = True
                                 break
-                            else:
+                            elif status is False:
                                 print(
                                     f"Initial temp for {label} not matching. Killing process and rerunning."
                                 )
-                                process.terminate()
+                                os.killpg(process.pid, signal.SIGTERM)
+                                time.sleep(1)  # Give time for termination
                                 try:
-                                    process.wait(timeout=10)
+                                    process.wait(timeout=30)
                                 except subprocess.TimeoutExpired:
-                                    process.kill()
+                                    os.killpg(process.pid, signal.SIGKILL)
                                 delete_simulation_files(label)
                                 break
                         time.sleep(1)  # Check every second
 
                     if not initial_temp_correct:
+                        # If timed out without file or status False already handled
+                        if process.poll() is None:
+                            print(f"Timeout waiting for thermo file for {label}. Killing process and rerunning.")
+                            os.killpg(process.pid, signal.SIGTERM)
+                            time.sleep(1)
+                            try:
+                                process.wait(timeout=30)
+                            except subprocess.TimeoutExpired:
+                                os.killpg(process.pid, signal.SIGKILL)
+                        delete_simulation_files(label)
                         continue  # Rerun with new seed
 
                     # Wait for completion
                     try:
-                        stdout, stderr = process.communicate(
-                            timeout=3600
-                        )  # Timeout for full run, adjust as needed
+                        stdout, stderr = process.communicate()
                         if process.returncode != 0:
                             raise subprocess.CalledProcessError(
                                 process.returncode, mlpmd_cmd
@@ -235,17 +240,17 @@ def main(start_iter=0):
                         )
                         success = True
                     except (
-                        subprocess.TimeoutExpired,
                         subprocess.CalledProcessError,
                     ) as e:
                         print(
-                            f"Simulation for {label} failed or timed out (possibly explosion). Killing and rerunning."
+                            f"Simulation for {label} failed (possibly explosion). Killing and rerunning."
                         )
-                        process.terminate()
+                        os.killpg(process.pid, signal.SIGTERM)
+                        time.sleep(1)  # Give time for termination
                         try:
                             process.wait(timeout=10)
                         except subprocess.TimeoutExpired:
-                            process.kill()
+                            os.killpg(process.pid, signal.SIGKILL)
                         delete_simulation_files(label)
                         # Continue to rerun
 
