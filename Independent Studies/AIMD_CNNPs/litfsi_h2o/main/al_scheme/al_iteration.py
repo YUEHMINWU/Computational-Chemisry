@@ -5,6 +5,7 @@ import sys
 from ase.io import read
 import re  # For parsing rmse from output
 import glob
+import time
 
 # Configuration
 NUM_ITERATIONS = 10
@@ -17,6 +18,7 @@ ALLEGRO_TRAINED_MODEL_DIR_BASE = "../results/allegro_model_output"
 CHEMICAL_SYMBOLS = ["Li", "F", "S", "O", "C", "N", "H"]
 CUTOFF = 6.0
 NUM_ENSEMBLES = 3
+TARGET_INITIAL_TEMP = 297.99999999999994316
 
 
 def parse_rmse_from_output(output):
@@ -51,9 +53,45 @@ def all_mlpmd_done(current_iter):
     for i in range(NUM_INIT_STRUCTS):
         label = f"iter{current_iter}_struct{i}"
         pos_file = os.path.join(MD_RESULTS_DIR, f"{label}-md-pos.xyz")
-        if not os.path.exists(pos_file):
+        thermo_file = os.path.join(MD_RESULTS_DIR, f"{label}-md-thermo.log")
+        if not os.path.exists(pos_file) or not check_initial_temp(thermo_file):
             return False
     return True
+
+
+def check_initial_temp(thermo_file):
+    if not os.path.exists(thermo_file):
+        return False
+    with open(thermo_file, "r") as f:
+        lines = f.readlines()
+    for line in lines:
+        if line.startswith("0 "):
+            parts = line.split()
+            if len(parts) >= 3:
+                try:
+                    temp = float(parts[2])
+                    if (
+                        abs(temp - TARGET_INITIAL_TEMP) < 1e-10
+                    ):  # Use tolerance for floating point comparison
+                        return True
+                except ValueError:
+                    pass
+            return False
+    return False
+
+
+def delete_simulation_files(label):
+    pos_file = os.path.join(MD_RESULTS_DIR, f"{label}-md-pos.xyz")
+    frc_file = os.path.join(MD_RESULTS_DIR, f"{label}-md-frc.xyz")
+    thermo_file = os.path.join(MD_RESULTS_DIR, f"{label}-md-thermo.log")
+    out_file = os.path.join("../logs", f"{label}.out")
+    in_file = os.path.join("../logs", f"{label}.in")
+    # data_file = os.path.join("../data", f"{label}.data")  # Can keep, as it's regenerated
+    files = [pos_file, frc_file, thermo_file, out_file, in_file]
+    for f in files:
+        if os.path.exists(f):
+            os.remove(f)
+            print(f"Deleted {f}")
 
 
 def main(start_iter=0):
@@ -118,28 +156,98 @@ def main(start_iter=0):
             for i, init_file in enumerate(init_files):
                 label = f"iter{current_iter}_struct{i}"
                 pos_file = os.path.join(MD_RESULTS_DIR, f"{label}-md-pos.xyz")
+                thermo_file = os.path.join(MD_RESULTS_DIR, f"{label}-md-thermo.log")
                 if os.path.exists(pos_file):
-                    print(f"MLIP-MD for {label} already run. Skipping this struct.")
-                    continue
-                mlpmd_cmd = [
-                    "conda",
-                    "run",
-                    "-n",
-                    "lammps_mlp",
-                    "python",
-                    "run_mlpmd.py",
-                    "--xyz_file",
-                    init_file,
-                    "--label",
-                    label,
-                    "--md_time",
-                    "50.0",
-                    "--model_file",
-                    f"{primary_model_dir}/deployed.nequip.pth",
-                ]
-                subprocess.run(
-                    mlpmd_cmd, check=True, capture_output=False
-                )  # Set to False for live debug output
+                    if check_initial_temp(thermo_file):
+                        print(
+                            f"MLIP-MD for {label} already run with correct initial temp. Skipping this struct."
+                        )
+                        continue
+                    else:
+                        print(
+                            f"MLIP-MD for {label} exists but initial temp incorrect. Deleting and rerunning."
+                        )
+                        delete_simulation_files(label)
+
+                # Run in a loop until success
+                success = False
+                while not success:
+                    mlpmd_cmd = [
+                        "conda",
+                        "run",
+                        "-n",
+                        "lammps_mlp",
+                        "python",
+                        "run_mlpmd.py",
+                        "--xyz_file",
+                        init_file,
+                        "--label",
+                        label,
+                        "--md_time",
+                        "50.0",
+                        "--model_file",
+                        f"{primary_model_dir}/deployed.nequip.pth",
+                    ]
+
+                    # Start the process non-blocking
+                    process = subprocess.Popen(
+                        mlpmd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                    )
+
+                    # Monitor thermo_file for initial temp
+                    initial_temp_correct = False
+                    start_time = time.time()
+                    while (
+                        time.time() - start_time < 60
+                    ):  # Timeout after 60 seconds if no file
+                        if os.path.exists(thermo_file):
+                            time.sleep(0.5)  # Give time for writing
+                            if check_initial_temp(thermo_file):
+                                initial_temp_correct = True
+                                break
+                            else:
+                                print(
+                                    f"Initial temp for {label} not matching. Killing process and rerunning."
+                                )
+                                process.terminate()
+                                try:
+                                    process.wait(timeout=10)
+                                except subprocess.TimeoutExpired:
+                                    process.kill()
+                                delete_simulation_files(label)
+                                break
+                        time.sleep(1)  # Check every second
+
+                    if not initial_temp_correct:
+                        continue  # Rerun with new seed
+
+                    # Wait for completion
+                    try:
+                        stdout, stderr = process.communicate(
+                            timeout=3600
+                        )  # Timeout for full run, adjust as needed
+                        if process.returncode != 0:
+                            raise subprocess.CalledProcessError(
+                                process.returncode, mlpmd_cmd
+                            )
+                        print(
+                            f"\n✅ LAMMPS simulation for {label} completed successfully."
+                        )
+                        success = True
+                    except (
+                        subprocess.TimeoutExpired,
+                        subprocess.CalledProcessError,
+                    ) as e:
+                        print(
+                            f"Simulation for {label} failed or timed out (possibly explosion). Killing and rerunning."
+                        )
+                        process.terminate()
+                        try:
+                            process.wait(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                        delete_simulation_files(label)
+                        # Continue to rerun
 
         # Step 3: UQ + Augment + Check RMSE with run_final_model.py
         unc_file = f"unc_data_iter_{current_iter}.npy"
