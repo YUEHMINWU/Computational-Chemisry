@@ -1,6 +1,7 @@
 import os
 import subprocess
 import argparse
+
 import random
 from ase import Atoms
 from ase.data import atomic_masses, atomic_numbers
@@ -95,7 +96,7 @@ def generate_lammps_input(
         mass_commands += f"mass {atom_type_index} {mass:.4f} # {symbol}\n"
 
     # Generate a random seed for velocity initialization
-    seed = 649966
+    seed = random.randint(99999, 1000000)
 
     lammps_input_content = f"""
 # LAMMPS input script for MLPMD with Allegro model (Real Units)
