@@ -294,8 +294,8 @@ if __name__ == "__main__":
             train_frames_primary = augmented_size - val_frames_primary
             primary_file = args.augment
         else:
-            train_frames_primary = args.train_frames if args.train_frames else 900
-            val_frames_primary = args.val_frames if args.val_frames else 100
+            train_frames_primary = 4050
+            val_frames_primary = 450
             primary_file = (
                 "aimd_trajectory_primary_train_val.extxyz"  # Assuming defined elsewhere
             )
@@ -320,9 +320,9 @@ if __name__ == "__main__":
             )
             primary_model_path = train_allegro_model(primary_config_path, primary_dir)
 
-        # Ensembles (always use their fixed files and 900/100)
-        train_frames_ensemble = 900
-        val_frames_ensemble = 100
+        # Ensembles (always use their fixed files and 2700/300)
+        train_frames_ensemble = 2700
+        val_frames_ensemble = 300
         for ensemble_id in range(NUM_ENSEMBLES):
             ensemble_dir = f"{ALLEGRO_TRAINED_MODEL_DIR_BASE}_{ensemble_id}"
             ensemble_deployed = os.path.join(ensemble_dir, "deployed.nequip.pth")
@@ -330,7 +330,9 @@ if __name__ == "__main__":
                 print(f"Ensemble model {ensemble_id} already trained. Skipping.")
             else:
                 print(f"\nTraining ensemble model {ensemble_id}")
-                ensemble_file = f"aimd_trajectory_ensemble_{ensemble_id}_train_val.extxyz"
+                ensemble_file = (
+                    f"aimd_trajectory_ensemble_{ensemble_id}_train_val.extxyz"
+                )
                 ensemble_config_path = prepare_allegro_config(
                     ensemble_dir,
                     ensemble_file,
