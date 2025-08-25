@@ -42,9 +42,8 @@ RUNS = [
         "end_step": 39999,
     },
 ]
-TRAIN_VAL_FRAMES_PER_MODEL = (
-    1000  # Absolute for train/val per model (primary + ensembles)
-)
+PRIMARY_TRAIN_VAL_FRAMES = 4500  # Total frames for primary model (train + val)
+ENSEMBLE_TRAIN_VAL_FRAMES = 3000  # Total frames per ensemble model (train + val)
 COMBINED_TEST_FRAMES = 500  # Absolute for combined test from last 5 ps
 NUM_ENSEMBLES = 3  # Number of ensemble models
 NUM_PRIMARY = 1  # Primary model
@@ -390,7 +389,7 @@ if __name__ == "__main__":
         early_atoms,
         combined_early_scaled,
         PRIMARY_TRAIN_VAL_FILE,
-        TRAIN_VAL_FRAMES_PER_MODEL,
+        PRIMARY_TRAIN_VAL_FRAMES,
         0,  # Seed for primary
         excluded_early,
     )
@@ -403,7 +402,7 @@ if __name__ == "__main__":
             early_atoms,
             combined_early_scaled,
             f"aimd_trajectory_ensemble_{ensemble_id}_train_val.extxyz",
-            TRAIN_VAL_FRAMES_PER_MODEL,
+            ENSEMBLE_TRAIN_VAL_FRAMES,
             ensemble_id + 1,  # Unique seeds
             excluded_early,
         )
