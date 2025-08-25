@@ -19,7 +19,6 @@ ALLEGRO_TRAINED_MODEL_DIR_BASE = "../results/allegro_model_output"
 CHEMICAL_SYMBOLS = ["Li", "F", "S", "O", "C", "N", "H"]
 CUTOFF = 6.0
 NUM_ENSEMBLES = 3
-TARGET_INITIAL_TEMP_STR = "297.99999999999994316"
 
 
 def parse_rmse_from_output(output):
@@ -54,25 +53,9 @@ def all_mlpmd_done(current_iter):
     for i in range(NUM_INIT_STRUCTS):
         label = f"iter{current_iter}_struct{i}"
         pos_file = os.path.join(MD_RESULTS_DIR, f"{label}-md-pos.xyz")
-        thermo_file = os.path.join(MD_RESULTS_DIR, f"{label}-md-thermo.log")
-        if not os.path.exists(pos_file) or not check_initial_temp(thermo_file):
+        if not os.path.exists(pos_file):
             return False
     return True
-
-
-def check_initial_temp(thermo_file):
-    if not os.path.exists(thermo_file):
-        return None
-    with open(thermo_file, "r") as f:
-        lines = f.readlines()
-    for line in lines:
-        if line.startswith("0 "):
-            parts = line.split()
-            if len(parts) >= 3 and parts[2] == TARGET_INITIAL_TEMP_STR:
-                return True
-            else:
-                return False
-    return None  # Step 0 not yet written
 
 
 def delete_simulation_files(label):
@@ -151,18 +134,14 @@ def main(start_iter=0):
             for i, init_file in enumerate(init_files):
                 label = f"iter{current_iter}_struct{i}"
                 pos_file = os.path.join(MD_RESULTS_DIR, f"{label}-md-pos.xyz")
-                thermo_file = os.path.join(MD_RESULTS_DIR, f"{label}-md-thermo.log")
                 if os.path.exists(pos_file):
-                    if check_initial_temp(thermo_file):
-                        print(
-                            f"MLIP-MD for {label} already run with correct initial temp. Skipping this struct."
-                        )
-                        continue
-                    else:
-                        print(
-                            f"MLIP-MD for {label} exists but initial temp incorrect. Deleting and rerunning."
-                        )
-                        delete_simulation_files(label)
+                    print(f"MLIP-MD for {label} already run. Skipping this struct.")
+                    continue
+                else:
+                    print(
+                        f"MLIP-MD for {label} does not exist or incomplete. (Re)running."
+                    )
+                    delete_simulation_files(label)
 
                 # Run in a loop until success
                 success = False
@@ -186,47 +165,11 @@ def main(start_iter=0):
 
                     # Start the process non-blocking, in a new session for group killing
                     process = subprocess.Popen(
-                        mlpmd_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setsid
+                        mlpmd_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        preexec_fn=os.setsid,
                     )
-
-                    # Monitor thermo_file for initial temp
-                    initial_temp_correct = False
-                    start_time = time.time()
-                    while (
-                        time.time() - start_time < 120
-                    ):  # Increased timeout to 120 seconds
-                        if os.path.exists(thermo_file):
-                            time.sleep(5)  # Give time for writing
-                            status = check_initial_temp(thermo_file)
-                            if status is True:
-                                initial_temp_correct = True
-                                break
-                            elif status is False:
-                                print(
-                                    f"Initial temp for {label} not matching. Killing process and rerunning."
-                                )
-                                os.killpg(process.pid, signal.SIGTERM)
-                                time.sleep(1)  # Give time for termination
-                                try:
-                                    process.wait(timeout=30)
-                                except subprocess.TimeoutExpired:
-                                    os.killpg(process.pid, signal.SIGKILL)
-                                delete_simulation_files(label)
-                                break
-                        time.sleep(1)  # Check every second
-
-                    if not initial_temp_correct:
-                        # If timed out without file or status False already handled
-                        if process.poll() is None:
-                            print(f"Timeout waiting for thermo file for {label}. Killing process and rerunning.")
-                            os.killpg(process.pid, signal.SIGTERM)
-                            time.sleep(1)
-                            try:
-                                process.wait(timeout=30)
-                            except subprocess.TimeoutExpired:
-                                os.killpg(process.pid, signal.SIGKILL)
-                        delete_simulation_files(label)
-                        continue  # Rerun with new seed
 
                     # Wait for completion
                     try:
@@ -239,18 +182,17 @@ def main(start_iter=0):
                             f"\n✅ LAMMPS simulation for {label} completed successfully."
                         )
                         success = True
-                    except (
-                        subprocess.CalledProcessError,
-                    ) as e:
+                    except (subprocess.CalledProcessError,) as e:
                         print(
                             f"Simulation for {label} failed (possibly explosion). Killing and rerunning."
                         )
-                        os.killpg(process.pid, signal.SIGTERM)
-                        time.sleep(1)  # Give time for termination
-                        try:
-                            process.wait(timeout=10)
-                        except subprocess.TimeoutExpired:
-                            os.killpg(process.pid, signal.SIGKILL)
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGTERM)
+                            time.sleep(1)  # Give time for termination
+                            try:
+                                process.wait(timeout=10)
+                            except subprocess.TimeoutExpired:
+                                os.killpg(process.pid, signal.SIGKILL)
                         delete_simulation_files(label)
                         # Continue to rerun
 
