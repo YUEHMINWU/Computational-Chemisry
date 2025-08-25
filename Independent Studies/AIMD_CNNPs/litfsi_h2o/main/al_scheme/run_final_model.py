@@ -400,23 +400,13 @@ def get_ensemble_uncertainties(
     return results
 
 
-# The physical screening functions remain unchanged.
-# MAX_ALLOWED_ENERGY_KCAL_MOL_per_atom = -7890.0
+MAX_ALLOWED_ENERGY_KCAL_MOL_per_atom = -7890.0
 num_atoms = 244
-# MAX_ALLOWED_FORCE_KCAL_MOL_A = 800.0
+MAX_ALLOWED_FORCE_KCAL_MOL_A = 800.0
 MIN_DISTANCE_CUTOFF = 0.8
 
 
 def is_physical(frame):
-    # energy_per_atom = frame.info.get("energy", 0) / num_atoms
-    # # Accept all energies smaller (more negative, lower energy) than the max allowed energy
-    # if energy_per_atom > MAX_ALLOWED_ENERGY_KCAL_MOL_per_atom:
-    #     return False
-    # forces = frame.get_forces()
-    # if np.any(forces):
-    #     max_force = np.max(np.linalg.norm(forces, axis=1))
-    #     if max_force > MAX_ALLOWED_FORCE_KCAL_MOL_A:
-    #         return False
     distances = frame.get_all_distances(mic=True)
     np.fill_diagonal(distances, np.inf)
     if np.min(distances) < MIN_DISTANCE_CUTOFF:
@@ -434,7 +424,7 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
     else:
         base_frames = read(PRIMARY_TRAIN_VAL_FILE, index=":")
     low = 3.0
-    upp = 5.0
+    upp = 8.0
     print(
         f"Calibrated uncertainty thresholds: low={low:.1f}, upp={upp:.1f} (e.g., kcal/mol·Å)"
     )
@@ -445,49 +435,111 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
     sorted_high_unc_idx = high_unc_indices[
         np.argsort(unc_results["max_cal_unc_scores"][high_unc_indices])[::-1]
     ]
+    # Load DFT labels for test frames
+    true_test_atoms = read(FINAL_TEST_FILE, index=":")
+    # Load ensemble models for computing errors and uncertainties
+    calculators = []
+    for i in range(NUM_ENSEMBLES):
+        model_path = f"../results/allegro_model_output_{i}/deployed.nequip.pth"
+        model = torch.jit.load(model_path, map_location=torch.device("cpu"))
+        calc = CustomNequIPCalculator(
+            model=model,
+            device="cpu",
+            chemical_symbols=CHEMICAL_SYMBOLS,
+            cutoff=CUTOFF,
+            periodic=True,
+        )
+        calculators.append(calc)
+    # Compute qhat from unc_results
+    qhat_index = np.argmax(unc_results["unc_scores"])
+    if unc_results["unc_scores"][qhat_index] > 0:
+        qhat = unc_results["cal_unc_scores"][qhat_index] / unc_results["unc_scores"][qhat_index]
+    else:
+        qhat = 1.0
+    # Collect data for plotting
+    per_atom_err = []
+    per_atom_unc = []
     high_unc_frames = []
     physical_frames_added = 0
     unphysical_frames_rejected = 0
     print(
         f"Screening {len(sorted_high_unc_idx)} high-uncertainty candidates for physical realism..."
     )
+    pos_tolerance = 1e-5  # Tolerance for position RMSE in Å
     for idx in sorted_high_unc_idx:
         frame = unc_results["test_frames"][idx]
-        if is_physical(frame):
-            high_unc_frames.append(frame)
-            physical_frames_added += 1
-        else:
+        if not is_physical(frame):
             unphysical_frames_rejected += 1
+            continue
+        # Find best matching DFT frame
+        best_dft_idx = None
+        min_rmse = float('inf')
+        for dft_idx, dft_frame in enumerate(true_test_atoms):
+            dft_pos = dft_frame.get_positions()
+            pos_rmse = np.sqrt(np.mean((frame.get_positions() - dft_pos) ** 2))
+            if pos_rmse < pos_tolerance and pos_rmse < min_rmse:
+                min_rmse = pos_rmse
+                best_dft_idx = dft_idx
+        if best_dft_idx is None:
+            print(f"No matching DFT frame for MLIP idx {idx}; skipping.")
+            continue
+        dft_frame = true_test_atoms[best_dft_idx]
+        dft_energy_per_atom = dft_frame.info.get("energy", 0) / num_atoms
+        # Check DFT energy
+        if dft_energy_per_atom > MAX_ALLOWED_ENERGY_KCAL_MOL_per_atom:
+            unphysical_frames_rejected += 1
+            continue
+        dft_forces = dft_frame.get_forces()
+        # Check max DFT force
+        if np.any(dft_forces):
+            max_force = np.max(np.linalg.norm(dft_forces, axis=1))
+            if max_force > MAX_ALLOWED_FORCE_KCAL_MOL_A:
+                unphysical_frames_rejected += 1
+                continue
+        # Compute ensemble predictions for plot data
+        pred_forces_list = []
+        for calc in calculators:
+            frame.calc = calc
+            try:
+                pred_forces = frame.get_forces()
+            except Exception as e:
+                print(f"Error computing forces for frame idx {idx}: {e}")
+                continue
+            pred_forces_list.append(pred_forces)
+        if len(pred_forces_list) < NUM_ENSEMBLES:
+            continue
+        forces_array = np.stack(pred_forces_list)
+        mean_forces = np.mean(forces_array, axis=0)
+        # Compute per-atom error (mean abs over components)
+        abs_err_per_atom = np.mean(np.abs(dft_forces - mean_forces), axis=1)
+        # Compute per-atom heuristic unc
+        sqdev_per_model_per_atom = np.mean(
+            (forces_array - mean_forces[None, :, :]) ** 2, axis=2
+        )
+        var_per_atom = np.mean(sqdev_per_model_per_atom, axis=0)
+        std_per_atom = np.sqrt(var_per_atom)
+        # Apply CP
+        cp_unc_per_atom = std_per_atom * qhat
+        # Collect data
+        per_atom_err.extend(abs_err_per_atom)
+        per_atom_unc.extend(cp_unc_per_atom)
+        # Apply DFT labeling
+        frame.info["energy"] = dft_frame.info.get("energy", 0.0)
+        frame.arrays["forces"] = dft_forces
+        high_unc_frames.append(frame)
+        physical_frames_added += 1
     print(f"Screening complete. Added {physical_frames_added} new physical frames.")
     print(f"Rejected {unphysical_frames_rejected} unphysical frames.")
     failed_indices = np.where(unc_results["max_cal_unc_scores"] >= upp)[0]
     print(f"Skipped {len(failed_indices)} frames with cal_unc >= {upp:.1f}")
-    # Load primary model and compute/set energy and forces explicitly
-    model_path = os.path.join(model_dir, "deployed.nequip.pth")
-    model = torch.jit.load(model_path, map_location=torch.device("cpu"))
-    primary_calc = CustomNequIPCalculator(
-        model=model,
-        device="cpu",
-        chemical_symbols=CHEMICAL_SYMBOLS,
-        cutoff=CUTOFF,
-        periodic=True,
-    )
-    print(
-        "Computing energy and forces for high-uncertainty frames using primary model..."
-    )
-    for frame in high_unc_frames:
-        frame.calc = primary_calc
-        try:
-            energy = frame.get_potential_energy()
-            forces = frame.get_forces()
-            frame.info["energy"] = energy
-            frame.arrays["forces"] = forces
-        except Exception as e:
-            print(f"Error computing for frame: {e}. Skipping.")
-            high_unc_frames.remove(frame)
-            continue
-        frame.calc = None
-
+    # Save data for plotting
+    plot_data = {
+        "atomic_force_uncertainty": np.array(per_atom_unc),
+        "atomic_force_rmse": np.array(per_atom_err),
+    }
+    plot_file = f"unc_rmse_plot_iter_{iter_num}.npy"
+    np.save(plot_file, plot_data)
+    print(f"Saved uncertainty vs RMSE data to {plot_file}.")
     augmented_frames = base_frames + high_unc_frames
     versioned_file = f"augmented_primary_train_val_iter_{iter_num}.extxyz"
     write(versioned_file, augmented_frames)
@@ -495,6 +547,8 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
         f"Augmented primary dataset size: {len(augmented_frames)} saved to {versioned_file}"
     )
     print(f"Versioned augmented file saved to {versioned_file}")
+    del calculators
+    gc.collect()
     return len(augmented_frames)
 
 
