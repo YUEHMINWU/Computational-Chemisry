@@ -30,21 +30,22 @@ def parse_rmse_from_output(output):
         raise ValueError("Could not parse RMSE from output.")
 
 
-def models_already_trained():
-    # Check if primary model for iter 0 exists
+def models_already_trained(iter_num):
+    # Check if primary model for current iter exists
     primary_path = os.path.join(
-        "../results/allegro_model_output_primary_iter_0", "deployed.nequip.pth"
+        f"../results/allegro_model_output_primary_iter_{iter_num}", "deployed.nequip.pth"
     )
     if not os.path.exists(primary_path):
         return False
 
-    # Check if all ensemble models exist
-    for i in range(NUM_ENSEMBLES):
-        ensemble_path = os.path.join(
-            f"{ALLEGRO_TRAINED_MODEL_DIR_BASE}_{i}", "deployed.nequip.pth"
-        )
-        if not os.path.exists(ensemble_path):
-            return False
+    # For iter 0, check ensembles
+    if iter_num == 0:
+        for i in range(NUM_ENSEMBLES):
+            ensemble_path = os.path.join(
+                f"{ALLEGRO_TRAINED_MODEL_DIR_BASE}_{i}", "deployed.nequip.pth"
+            )
+            if not os.path.exists(ensemble_path):
+                return False
 
     return True
 
@@ -64,7 +65,6 @@ def delete_simulation_files(label):
     thermo_file = os.path.join(MD_RESULTS_DIR, f"{label}-md-thermo.log")
     out_file = os.path.join("../logs", f"{label}.out")
     in_file = os.path.join("../logs", f"{label}.in")
-    # data_file = os.path.join("../data", f"{label}.data")  # Can keep, as it's regenerated
     files = [pos_file, frc_file, thermo_file, out_file, in_file]
     for f in files:
         if os.path.exists(f):
@@ -82,25 +82,22 @@ def main(start_iter=0):
         )
 
         # Step 1: Train models
-        if current_iter == 0:
-            if models_already_trained():
-                print(
-                    "Initial primary and ensemble models already trained. Skipping training."
-                )
-            else:
+        if models_already_trained(current_iter):
+            print(
+                "Primary (and ensemble for iter 0) models already trained. Skipping training."
+            )
+        else:
+            if current_iter == 0:
                 # Initial: Train primary + ensembles
                 train_cmd = ["python", "train_allegro_model.py", "--ensemble_mode"]
-                subprocess.run(
-                    train_cmd, check=True, capture_output=False
-                )  # Set to False for live debug output
-        else:
-            if os.path.exists(os.path.join(primary_model_dir, "deployed.nequip.pth")):
-                print("Augmented primary model already trained. Skipping training.")
             else:
-                # Later: Train only primary on augmented
+                # Later: Train only primary on augmented from previous
                 augmented_file = (
                     f"augmented_primary_train_val_iter_{current_iter - 1}.extxyz"
                 )
+                if not os.path.exists(augmented_file):
+                    print(f"Augmented file {augmented_file} not found. Cannot train.")
+                    sys.exit(1)
                 augmented_size = len(read(augmented_file, index=":"))
                 val_frames = int(0.1 * augmented_size)
                 train_frames = augmented_size - val_frames
@@ -116,9 +113,9 @@ def main(start_iter=0):
                     "--val_frames",
                     str(val_frames),
                 ]
-                subprocess.run(
-                    train_cmd, check=True, capture_output=False
-                )  # Set to False for live debug output
+            subprocess.run(
+                train_cmd, check=True, capture_output=False
+            )  # Set to False for live debug output
 
         # Step 2: Run MLIP-MD with primary on 3 init structs
         init_files = [
@@ -196,42 +193,30 @@ def main(start_iter=0):
                         delete_simulation_files(label)
                         # Continue to rerun
 
-        # Step 3: UQ + Augment + Check RMSE with run_final_model.py
+        # Step 3: Run CP uncertainty to get augmented_dataset_iter{i}.extxyz
         unc_file = f"unc_data_iter_{current_iter}.npy"
-        augmented_file = f"augmented_primary_train_val_iter_{current_iter}.extxyz"
-        if os.path.exists(augmented_file):
-            print("UQ and augmentation already done. Computing RMSE only.")
-            rmse_cmd = [
-                "python",
-                "run_final_model.py",
-                "--compute_rmse",
-                "--model_dir",
-                primary_model_dir,
-            ]
-            result = subprocess.run(
-                rmse_cmd, capture_output=True, text=True, check=True
-            )
-            rmse = parse_rmse_from_output(result.stdout)
+        augmented_dataset_file = f"augmented_dataset_iter{current_iter}.extxyz"
+        if os.path.exists(augmented_dataset_file):
+            print("CP uncertainty and augmentation already done. Skipping.")
         elif os.path.exists(unc_file):
-            print("UQ done. Performing augmentation and computing RMSE.")
-            final_cmd = [
+            print("UQ done. Performing augmentation.")
+            cp_cmd = [
                 "python",
-                "run_final_model.py",
+                "cp_uncertainty.py",
                 "--augment_only",
                 "--iter",
                 str(current_iter),
                 "--model_dir",
                 primary_model_dir,
             ]
-            result = subprocess.run(
-                final_cmd, capture_output=True, text=True, check=True
+            subprocess.run(
+                cp_cmd, check=True, capture_output=False
             )
-            rmse = parse_rmse_from_output(result.stdout)
         else:
-            print("Performing UQ, augmentation, and computing RMSE.")
-            final_cmd = [
+            print("Performing UQ and augmentation.")
+            cp_cmd = [
                 "python",
-                "run_final_model.py",
+                "cp_uncertainty.py",
                 "--traj_dir",
                 MD_RESULTS_DIR,
                 "--iter",
@@ -239,10 +224,38 @@ def main(start_iter=0):
                 "--model_dir",
                 primary_model_dir,
             ]
-            result = subprocess.run(
-                final_cmd, capture_output=True, text=True, check=True
+            subprocess.run(
+                cp_cmd, check=True, capture_output=False
             )
-            rmse = parse_rmse_from_output(result.stdout)
+
+        # Step 4: Run DFT labeling on augmented_dataset_iter{i}.extxyz
+        dft_labeled_file = f"augmented_dataset_iter{current_iter}_dft.extxyz"
+        combined_file = f"augmented_primary_train_val_iter_{current_iter}.extxyz"
+        if os.path.exists(combined_file):
+            print("DFT labeling and combination already done. Skipping.")
+        else:
+            dft_cmd = [
+                "python",
+                "dft_label.py",
+                "--iter",
+                str(current_iter),
+            ]
+            subprocess.run(
+                dft_cmd, check=True, capture_output=False
+            )
+
+        # Step 5: Check RMSE with cp_uncertainty.py
+        rmse_cmd = [
+            "python",
+            "cp_uncertainty.py",
+            "--compute_rmse",
+            "--model_dir",
+            primary_model_dir,
+        ]
+        result = subprocess.run(
+            rmse_cmd, capture_output=True, text=True, check=True
+        )
+        rmse = parse_rmse_from_output(result.stdout)
         print(f"Current RMSE: {rmse:.4f}")
         if rmse < RMSE_THRESHOLD:
             print("RMSE threshold met. Stopping iterations.")
@@ -259,7 +272,7 @@ def main(start_iter=0):
     )
     parity_cmd = [
         "python",
-        "run_final_model.py",
+        "cp_uncertainty.py",
         "--save_parity",
         "--model_dir",
         final_primary_dir,
