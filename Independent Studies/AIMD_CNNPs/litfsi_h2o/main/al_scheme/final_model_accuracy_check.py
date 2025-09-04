@@ -5,7 +5,7 @@ from scipy.stats import gaussian_kde
 
 # Load data
 PARITY_DATA_FILE = "temp_parity.npy"
-UNC_DATA_FILE = "unc_data_iter_0.npy"
+UNC_DATA_FILE = "unc_rmse_plot_iter_0.npy"
 
 parity_results = np.load(PARITY_DATA_FILE, allow_pickle=True).item()
 unc_results = np.load(UNC_DATA_FILE, allow_pickle=True).item()
@@ -104,15 +104,17 @@ fig_unc = plt.figure(figsize=(8, 6))
 ax_unc = fig_unc.add_subplot(1, 1, 1)
 
 # Compute 2D KDE for cal_unc vs rmse
-xy_unc_rmse = np.vstack([unc_results["rmse_scores"], unc_results["cal_unc_scores"]])
+xy_unc_rmse = np.vstack(
+    [unc_results["atomic_force_rmse"], unc_results["atomic_force_uncertainty"]]
+)
 z_unc = gaussian_kde(xy_unc_rmse)(xy_unc_rmse)
 # Normalize density
 z_unc = z_unc / np.max(z_unc)
 
 # Scatter with KDE coloring
 sns.scatterplot(
-    x=unc_results["rmse_scores"],
-    y=unc_results["cal_unc_scores"],
+    x=unc_results["atomic_force_rmse"],
+    y=unc_results["atomic_force_uncertainty"],
     hue=z_unc,
     palette="viridis",
     alpha=0.5,
@@ -121,14 +123,14 @@ sns.scatterplot(
     legend=False,
 )
 ax_unc.plot(
-    [0, max(unc_results["rmse_scores"])],
-    [0, max(unc_results["rmse_scores"])],
+    [0, max(unc_results["atomic_force_rmse"])],
+    [0, max(unc_results["atomic_force_rmse"])],
     color="r",
     linestyle="--",
     alpha=0.75,
 )  # y=x line
-ax_unc.set_title("Uncertainty vs Force RMSE")
-ax_unc.set_xlabel("Force RMSE [kcal/mol·Å]")
+ax_unc.set_title("Uncertainty vs Force MAE per Atom")
+ax_unc.set_xlabel("Force MAE per Atom [kcal/mol·Å]")
 ax_unc.set_ylabel("Uncertainty [kcal/mol·Å]")
 ax_unc.grid(True, linestyle="--", alpha=0.6)
 
