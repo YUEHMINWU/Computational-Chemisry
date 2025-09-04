@@ -19,7 +19,7 @@ MAX_EPOCHS = 200
 FORCE_COEFF = 1.0
 BATCH_SIZE = 5
 NUM_WORKERS = 5
-NUM_ENSEMBLES = 3  # Number of ensemble models to train
+NUM_ENSEMBLES = 5  # Number of ensemble models to train
 
 
 def prepare_allegro_config(
@@ -83,12 +83,12 @@ trainer:
   max_time: 07:00:00:00
   check_val_every_n_epoch: 1
   log_every_n_steps: 500
-  enable_progress_bar: true
+  enable_progress_bar: false
   callbacks:
     - _target_: lightning.pytorch.callbacks.EarlyStopping
       monitor: ${{monitored_metric}}
       patience: 20
-      min_delta: 1e-3
+      min_delta: 1e-4
     - _target_: lightning.pytorch.callbacks.ModelCheckpoint
       monitor: ${{monitored_metric}}
       filename: best
@@ -294,8 +294,8 @@ if __name__ == "__main__":
             train_frames_primary = augmented_size - val_frames_primary
             primary_file = args.augment
         else:
-            train_frames_primary = 4050
-            val_frames_primary = 450
+            train_frames_primary = 2700
+            val_frames_primary = 300
             primary_file = (
                 "aimd_trajectory_primary_train_val.extxyz"  # Assuming defined elsewhere
             )
@@ -320,9 +320,9 @@ if __name__ == "__main__":
             )
             primary_model_path = train_allegro_model(primary_config_path, primary_dir)
 
-        # Ensembles (always use their fixed files and 2700/300)
-        train_frames_ensemble = 2700
-        val_frames_ensemble = 300
+        # Ensembles (always use their fixed files and 450/50)
+        train_frames_ensemble = 450
+        val_frames_ensemble = 50
         for ensemble_id in range(NUM_ENSEMBLES):
             ensemble_dir = f"{ALLEGRO_TRAINED_MODEL_DIR_BASE}_{ensemble_id}"
             ensemble_deployed = os.path.join(ensemble_dir, "deployed.nequip.pth")
