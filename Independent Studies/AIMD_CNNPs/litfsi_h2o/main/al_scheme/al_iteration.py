@@ -11,14 +11,14 @@ import signal
 # Configuration
 NUM_ITERATIONS = 10
 RMSE_THRESHOLD = 0.8  # kcal/mol/Å
-NUM_INIT_STRUCTS = 3
+NUM_INIT_STRUCTS = 5
 INIT_STRUCT_DIR = "init_structs"
 MD_RESULTS_DIR = "../results"
 FINAL_TEST_FILE = "final_test.extxyz"
 ALLEGRO_TRAINED_MODEL_DIR_BASE = "../results/allegro_model_output"
 CHEMICAL_SYMBOLS = ["Li", "F", "S", "O", "C", "N", "H"]
 CUTOFF = 6.0
-NUM_ENSEMBLES = 3
+NUM_ENSEMBLES = 5
 
 
 def parse_rmse_from_output(output):
@@ -33,7 +33,8 @@ def parse_rmse_from_output(output):
 def models_already_trained(iter_num):
     # Check if primary model for current iter exists
     primary_path = os.path.join(
-        f"../results/allegro_model_output_primary_iter_{iter_num}", "deployed.nequip.pth"
+        f"../results/allegro_model_output_primary_iter_{iter_num}",
+        "deployed.nequip.pth",
     )
     if not os.path.exists(primary_path):
         return False
@@ -209,9 +210,7 @@ def main(start_iter=0):
                 "--model_dir",
                 primary_model_dir,
             ]
-            subprocess.run(
-                cp_cmd, check=True, capture_output=False
-            )
+            subprocess.run(cp_cmd, check=True, capture_output=False)
         else:
             print("Performing UQ and augmentation.")
             cp_cmd = [
@@ -224,9 +223,7 @@ def main(start_iter=0):
                 "--model_dir",
                 primary_model_dir,
             ]
-            subprocess.run(
-                cp_cmd, check=True, capture_output=False
-            )
+            subprocess.run(cp_cmd, check=True, capture_output=False)
 
         # Step 4: Run DFT labeling on augmented_dataset_iter{i}.extxyz
         dft_labeled_file = f"augmented_dataset_iter{current_iter}_dft.extxyz"
@@ -240,9 +237,7 @@ def main(start_iter=0):
                 "--iter",
                 str(current_iter),
             ]
-            subprocess.run(
-                dft_cmd, check=True, capture_output=False
-            )
+            subprocess.run(dft_cmd, check=True, capture_output=False)
 
         # Step 5: Check RMSE with cp_uncertainty.py
         rmse_cmd = [
@@ -252,9 +247,7 @@ def main(start_iter=0):
             "--model_dir",
             primary_model_dir,
         ]
-        result = subprocess.run(
-            rmse_cmd, capture_output=True, text=True, check=True
-        )
+        result = subprocess.run(rmse_cmd, capture_output=True, text=True, check=True)
         rmse = parse_rmse_from_output(result.stdout)
         print(f"Current RMSE: {rmse:.4f}")
         if rmse < RMSE_THRESHOLD:
