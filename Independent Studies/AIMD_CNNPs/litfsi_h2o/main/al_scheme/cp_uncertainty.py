@@ -87,6 +87,7 @@ class ConformalPrediction:
     Performs quantile regression on score functions to obtain the estimated qhat
         on calibration data and apply to test data during prediction.
     """
+
     def __init__(self, alpha):
         self.alpha = alpha
 
@@ -111,7 +112,7 @@ def split_test_calib(full_test_X, per_calib, seed=0):
     """
     np.random.seed(seed)
     num_total = len(full_test_X)
-    num_calib = round(per_calib * num_total)
+    num_calib = int(per_calib * num_total)
     rand_idx = np.random.permutation(num_total)
     calib_idx = rand_idx[:num_calib]
     test_idx = rand_idx[num_calib:]
@@ -123,7 +124,7 @@ def split_test_calib(full_test_X, per_calib, seed=0):
 # Configuration
 CHEMICAL_SYMBOLS = ["Li", "F", "S", "O", "C", "N", "H"]
 CUTOFF = 6.0
-NUM_ENSEMBLES = 3
+NUM_ENSEMBLES = 5
 SUBSAMPLE_RATE = 1
 FINAL_TEST_FILE = "final_test.extxyz"
 PRIMARY_TRAIN_VAL_FILE = "aimd_trajectory_primary_train_val.extxyz"
@@ -297,7 +298,7 @@ def get_ensemble_uncertainties(
         f"Subsampled {len(subsampled)} frames from MLIP trajectories for uncertainty detection."
     )
     # Split into calib and test
-    per_calib = 0.2
+    per_calib = 0.1
     test_X, calib_X, test_subidx, calib_subidx = split_test_calib(
         subsampled, per_calib=per_calib
     )
@@ -451,7 +452,10 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
     # Compute qhat from unc_results
     qhat_index = np.argmax(unc_results["unc_scores"])
     if unc_results["unc_scores"][qhat_index] > 0:
-        qhat = unc_results["cal_unc_scores"][qhat_index] / unc_results["unc_scores"][qhat_index]
+        qhat = (
+            unc_results["cal_unc_scores"][qhat_index]
+            / unc_results["unc_scores"][qhat_index]
+        )
     else:
         qhat = 1.0
     # Collect data for plotting
@@ -471,7 +475,7 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
             continue
         # Find best matching DFT frame for RMSE/unc calculation (no labeling)
         best_dft_idx = None
-        min_rmse = float('inf')
+        min_rmse = float("inf")
         for dft_idx, dft_frame in enumerate(true_test_atoms):
             dft_pos = dft_frame.get_positions()
             pos_rmse = np.sqrt(np.mean((frame.get_positions() - dft_pos) ** 2))
@@ -540,7 +544,9 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
     augmented_file = f"augmented_dataset_iter{iter_num}.extxyz"
     if high_unc_frames:
         write(augmented_file, high_unc_frames)
-        print(f"Augmented dataset (new frames only) size: {len(high_unc_frames)} saved to {augmented_file}")
+        print(
+            f"Augmented dataset (new frames only) size: {len(high_unc_frames)} saved to {augmented_file}"
+        )
     else:
         print("No frames added; no augmented file saved.")
     del calculators
@@ -606,7 +612,9 @@ def get_rmse(model_path, test_file, chemical_symbols, cutoff):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run CP uncertainty for AL augmentation")
+    parser = argparse.ArgumentParser(
+        description="Run CP uncertainty for AL augmentation"
+    )
     parser.add_argument(
         "--traj_dir",
         type=str,
