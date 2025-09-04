@@ -11,6 +11,7 @@ import numpy as np
 HARTREE_TO_KCAL_MOL = 627.50960803
 BOHR_TO_ANGSTROM = 0.5291772109
 FORCE_CONVERSION_FACTOR = HARTREE_TO_KCAL_MOL / BOHR_TO_ANGSTROM
+PRIMARY_TRAIN_VAL_FILE = "aimd_trajectory_primary_train_val.extxyz"
 
 def run_cp2k_single_point(frame, template_inp="dft_label.inp", label="frame", n_cores=1, work_dir="."):
     temp_dir = os.path.join(work_dir, f"cp2k_run_{label}")
