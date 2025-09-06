@@ -19,6 +19,7 @@ ALLEGRO_TRAINED_MODEL_DIR_BASE = "../results/allegro_model_output"
 CHEMICAL_SYMBOLS = ["Li", "F", "S", "O", "C", "N", "H"]
 CUTOFF = 6.0
 NUM_ENSEMBLES = 5
+INITIAL_TRAIN_VAL_FILE = "aimd_trajectory_primary_train_val.extxyz"
 
 
 def parse_rmse_from_output(output):
@@ -73,7 +74,7 @@ def delete_simulation_files(label):
             print(f"Deleted {f}")
 
 
-def main(start_iter=0):
+def main(start_iter=0, save_parity_per_iter=False):
     current_iter = start_iter
     while current_iter < NUM_ITERATIONS:
         print(f"\n--- Iteration {current_iter + 1}/{NUM_ITERATIONS} ---")
@@ -89,8 +90,31 @@ def main(start_iter=0):
             )
         else:
             if current_iter == 0:
-                # Initial: Train primary + ensembles
-                train_cmd = ["python", "train_allegro_model.py", "--ensemble_mode"]
+                # Train primary on initial data
+                initial_file = INITIAL_TRAIN_VAL_FILE
+                if not os.path.exists(initial_file):
+                    print(f"Initial train val file {initial_file} not found.")
+                    sys.exit(1)
+                initial_size = len(read(initial_file, index=":"))
+                val_frames = int(0.1 * initial_size)
+                train_frames = initial_size - val_frames
+                primary_train_cmd = [
+                    "python",
+                    "train_allegro_model.py",
+                    "--train_val_file",
+                    initial_file,
+                    "--output_dir",
+                    primary_model_dir,
+                    "--train_frames",
+                    str(train_frames),
+                    "--val_frames",
+                    str(val_frames),
+                ]
+                subprocess.run(primary_train_cmd, check=True, capture_output=False)
+
+                # Train ensembles
+                ensemble_cmd = ["python", "train_allegro_model.py", "--ensemble_mode"]
+                subprocess.run(ensemble_cmd, check=True, capture_output=False)
             else:
                 # Later: Train only primary on augmented from previous
                 augmented_file = (
@@ -114,9 +138,25 @@ def main(start_iter=0):
                     "--val_frames",
                     str(val_frames),
                 ]
-            subprocess.run(
-                train_cmd, check=True, capture_output=False
-            )  # Set to False for live debug output
+                subprocess.run(train_cmd, check=True, capture_output=False)
+
+        # Step 1.5: Check RMSE with cp_uncertainty.py before proceeding
+        rmse_cmd = [
+            "python",
+            "cp_uncertainty.py",
+            "--model_dir",
+            primary_model_dir,
+        ]
+        if save_parity_per_iter:
+            rmse_cmd += ["--compute_rmse_and_parity", "--iter", str(current_iter)]
+        else:
+            rmse_cmd += ["--compute_rmse"]
+        result = subprocess.run(rmse_cmd, capture_output=False, text=True, check=True)
+        rmse = parse_rmse_from_output(result.stdout)
+        print(f"Current RMSE: {rmse:.4f}")
+        if rmse < RMSE_THRESHOLD:
+            print("RMSE threshold met. Stopping iterations.")
+            break
 
         # Step 2: Run MLIP-MD with primary on 3 init structs
         init_files = [
@@ -239,30 +279,20 @@ def main(start_iter=0):
             ]
             subprocess.run(dft_cmd, check=True, capture_output=False)
 
-        # Step 5: Check RMSE with cp_uncertainty.py
-        rmse_cmd = [
-            "python",
-            "cp_uncertainty.py",
-            "--compute_rmse",
-            "--model_dir",
-            primary_model_dir,
-        ]
-        result = subprocess.run(rmse_cmd, capture_output=True, text=True, check=True)
-        rmse = parse_rmse_from_output(result.stdout)
-        print(f"Current RMSE: {rmse:.4f}")
-        if rmse < RMSE_THRESHOLD:
-            print("RMSE threshold met. Stopping iterations.")
-            break
-
         current_iter += 1
 
     print("\nAL loop complete.")
 
     # After loop: Generate final_parity.npy using the final primary model
     print("\nGenerating final parity data...")
-    final_primary_dir = (
-        f"../results/allegro_model_output_primary_iter_{current_iter - 1}"
-    )
+    if rmse < RMSE_THRESHOLD:
+        final_primary_dir = (
+            f"../results/allegro_model_output_primary_iter_{current_iter}"
+        )
+    else:
+        final_primary_dir = (
+            f"../results/allegro_model_output_primary_iter_{current_iter - 1}"
+        )
     parity_cmd = [
         "python",
         "cp_uncertainty.py",
@@ -281,5 +311,10 @@ if __name__ == "__main__":
         default=0,
         help="Starting iteration number",
     )
+    parser.add_argument(
+        "--save_parity_per_iter",
+        action="store_true",
+        help="Save temp_parity_iter_{i}.npy for each iteration",
+    )
     args = parser.parse_args()
-    main(args.start_iter)
+    main(args.start_iter, args.save_parity_per_iter)
