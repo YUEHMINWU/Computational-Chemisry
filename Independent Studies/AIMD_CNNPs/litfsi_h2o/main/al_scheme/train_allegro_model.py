@@ -286,40 +286,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.ensemble_mode:
-        # Ensemble mode: Train primary + 3 ensembles
-        # Compute train/val for primary if augmenting
-        if args.augment:
-            augmented_size = len(read(args.augment, index=":"))
-            val_frames_primary = int(0.1 * augmented_size)
-            train_frames_primary = augmented_size - val_frames_primary
-            primary_file = args.augment
-        else:
-            train_frames_primary = 2700
-            val_frames_primary = 300
-            primary_file = (
-                "aimd_trajectory_primary_train_val.extxyz"  # Assuming defined elsewhere
-            )
-
-        # Primary
-        primary_dir = "../results/allegro_model_output_primary_iter_0"
-        primary_deployed = os.path.join(primary_dir, "deployed.nequip.pth")
-        if os.path.exists(primary_deployed):
-            print("Primary model already trained. Skipping.")
-        else:
-            print("\nTraining primary model")
-            primary_config_path = prepare_allegro_config(
-                primary_dir,
-                primary_file,
-                SYSTEM_ELEMENTS,
-                CUTOFF_RADIUS,
-                MAX_EPOCHS,
-                FORCE_COEFF,
-                BATCH_SIZE,
-                train_frames_primary,
-                val_frames_primary,
-            )
-            primary_model_path = train_allegro_model(primary_config_path, primary_dir)
-
+        # Ensemble mode: Train ensembles (primary handled separately)
         # Ensembles (always use their fixed files and 450/50)
         train_frames_ensemble = 450
         val_frames_ensemble = 50
@@ -349,10 +316,10 @@ if __name__ == "__main__":
                 )
 
         print("\n" + "=" * 50)
-        print("✅ All trainings complete.")
+        print("✅ All ensemble trainings complete.")
         print("=" * 50)
     else:
-        # Single model mode (for final model)
+        # Single model mode (for primary models)
         if (
             args.train_val_file
             and args.output_dir
