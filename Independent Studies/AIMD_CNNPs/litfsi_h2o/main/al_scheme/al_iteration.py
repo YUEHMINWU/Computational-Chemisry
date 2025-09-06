@@ -7,7 +7,6 @@ import re  # For parsing rmse from output
 import glob
 import time
 import signal
-import numpy as np
 
 # Configuration
 NUM_ITERATIONS = 10
@@ -167,21 +166,12 @@ def main(start_iter=0, save_parity_per_iter=False):
             "cp_uncertainty.py",
             "--model_dir",
             primary_model_dir,
+            "--compute_rmse_and_parity",
+            "--iter",
+            str(current_iter),
         ]
-        if save_parity_per_iter:
-            parity_file = f"temp_parity_iter_{current_iter}.npy"
-            if os.path.exists(parity_file):
-                results = np.load(parity_file, allow_pickle=True).item()
-                rmse = np.sqrt(np.mean((results["true_force"] - results["pred_force"]) ** 2))
-                print(f"Loaded RMSE from existing {parity_file}: {rmse:.4f}")
-            else:
-                rmse_cmd += ["--compute_rmse_and_parity", "--iter", str(current_iter)]
-                result = subprocess.run(rmse_cmd, capture_output=True, text=True, check=True)
-                rmse = parse_rmse_from_output(result.stdout)
-        else:
-            rmse_cmd += ["--compute_rmse"]
-            result = subprocess.run(rmse_cmd, capture_output=True, text=True, check=True)
-            rmse = parse_rmse_from_output(result.stdout)
+        result = subprocess.run(rmse_cmd, capture_output=True, text=True, check=True)
+        rmse = parse_rmse_from_output(result.stdout)
         print(f"Current RMSE: {rmse:.4f}")
         if rmse < RMSE_THRESHOLD:
             print("RMSE threshold met. Stopping iterations.")
