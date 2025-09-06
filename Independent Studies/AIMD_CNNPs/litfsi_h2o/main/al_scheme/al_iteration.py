@@ -90,31 +90,51 @@ def main(start_iter=0, save_parity_per_iter=False):
             )
         else:
             if current_iter == 0:
-                # Train primary on initial data
-                initial_file = INITIAL_TRAIN_VAL_FILE
-                if not os.path.exists(initial_file):
-                    print(f"Initial train val file {initial_file} not found.")
-                    sys.exit(1)
-                initial_size = len(read(initial_file, index=":"))
-                val_frames = int(0.1 * initial_size)
-                train_frames = initial_size - val_frames
-                primary_train_cmd = [
-                    "python",
-                    "train_allegro_model.py",
-                    "--train_val_file",
-                    initial_file,
-                    "--output_dir",
-                    primary_model_dir,
-                    "--train_frames",
-                    str(train_frames),
-                    "--val_frames",
-                    str(val_frames),
-                ]
-                subprocess.run(primary_train_cmd, check=True, capture_output=False)
+                # Initial: Train primary on initial data if not exists
+                primary_path = os.path.join(primary_model_dir, "deployed.nequip.pth")
+                if not os.path.exists(primary_path):
+                    initial_file = INITIAL_TRAIN_VAL_FILE
+                    if not os.path.exists(initial_file):
+                        print(f"Initial train val file {initial_file} not found.")
+                        sys.exit(1)
+                    initial_size = len(read(initial_file, index=":"))
+                    val_frames = int(0.1 * initial_size)
+                    train_frames = initial_size - val_frames
+                    primary_train_cmd = [
+                        "python",
+                        "train_allegro_model.py",
+                        "--train_val_file",
+                        initial_file,
+                        "--output_dir",
+                        primary_model_dir,
+                        "--train_frames",
+                        str(train_frames),
+                        "--val_frames",
+                        str(val_frames),
+                    ]
+                    subprocess.run(primary_train_cmd, check=True, capture_output=False)
+                else:
+                    print("Primary model already trained. Skipping.")
 
-                # Train ensembles
-                ensemble_cmd = ["python", "train_allegro_model.py", "--ensemble_mode"]
-                subprocess.run(ensemble_cmd, check=True, capture_output=False)
+                # Check if all ensembles exist
+                all_ensembles_trained = True
+                for i in range(NUM_ENSEMBLES):
+                    ensemble_path = os.path.join(
+                        f"{ALLEGRO_TRAINED_MODEL_DIR_BASE}_{i}", "deployed.nequip.pth"
+                    )
+                    if not os.path.exists(ensemble_path):
+                        all_ensembles_trained = False
+                        break
+
+                if not all_ensembles_trained:
+                    ensemble_cmd = [
+                        "python",
+                        "train_allegro_model.py",
+                        "--ensemble_mode",
+                    ]
+                    subprocess.run(ensemble_cmd, check=True, capture_output=False)
+                else:
+                    print("All ensemble models already trained. Skipping.")
             else:
                 # Later: Train only primary on augmented from previous
                 augmented_file = (
@@ -146,12 +166,11 @@ def main(start_iter=0, save_parity_per_iter=False):
             "cp_uncertainty.py",
             "--model_dir",
             primary_model_dir,
+            "--compute_rmse_and_parity",
+            "--iter",
+            str(current_iter),
         ]
-        if save_parity_per_iter:
-            rmse_cmd += ["--compute_rmse_and_parity", "--iter", str(current_iter)]
-        else:
-            rmse_cmd += ["--compute_rmse"]
-        result = subprocess.run(rmse_cmd, capture_output=False, text=True, check=True)
+        result = subprocess.run(rmse_cmd, capture_output=True, text=True, check=True)
         rmse = parse_rmse_from_output(result.stdout)
         print(f"Current RMSE: {rmse:.4f}")
         if rmse < RMSE_THRESHOLD:
