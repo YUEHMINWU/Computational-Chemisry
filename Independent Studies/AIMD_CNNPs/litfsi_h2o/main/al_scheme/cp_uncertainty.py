@@ -554,9 +554,8 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
     return len(high_unc_frames)
 
 
-def get_predictions(model_path, test_file, chemical_symbols, cutoff, data_file):
-    # This function remains unchanged.
-    if os.path.exists(data_file):
+def get_predictions(model_path, test_file, chemical_symbols, cutoff, data_file=None):
+    if data_file and os.path.exists(data_file):
         print(f"Loading data from {data_file}...")
         return np.load(data_file, allow_pickle=True).item()
     print("Loading model...")
@@ -597,15 +596,15 @@ def get_predictions(model_path, test_file, chemical_symbols, cutoff, data_file):
         "true_force": np.array(true_forces_flat),
         "pred_force": np.array(pred_forces_flat),
     }
-    np.save(data_file, results)
-    print(f"Saved data to {data_file}.")
+    if data_file:
+        np.save(data_file, results)
+        print(f"Saved data to {data_file}.")
     return results
 
 
-def get_rmse(model_path, test_file, chemical_symbols, cutoff):
-    # This function remains unchanged.
+def get_rmse(model_path, test_file, chemical_symbols, cutoff, parity_file=None):
     results = get_predictions(
-        model_path, test_file, chemical_symbols, cutoff, "temp_parity.npy"
+        model_path, test_file, chemical_symbols, cutoff, data_file=parity_file
     )
     force_rmse = np.sqrt(np.mean((results["true_force"] - results["pred_force"]) ** 2))
     return force_rmse
@@ -632,6 +631,11 @@ if __name__ == "__main__":
         help="Compute and print RMSE only",
     )
     parser.add_argument(
+        "--compute_rmse_and_parity",
+        action="store_true",
+        help="Compute RMSE and save parity data",
+    )
+    parser.add_argument(
         "--augment_only",
         action="store_true",
         help="Perform augmentation only (assumes UQ done)",
@@ -653,6 +657,20 @@ if __name__ == "__main__":
     if args.compute_rmse:
         # Compute and print RMSE only
         rmse = get_rmse(model_path, FINAL_TEST_FILE, CHEMICAL_SYMBOLS, CUTOFF)
+        print(f"Force RMSE on test set: {rmse:.4f} kcal/mol/Å")
+        sys.exit(0)
+    if args.compute_rmse_and_parity:
+        if args.iter is None:
+            print("Error: --iter required for --compute_rmse_and_parity.")
+            sys.exit(1)
+        parity_file = f"temp_parity_iter_{args.iter}.npy"
+        rmse = get_rmse(
+            model_path,
+            FINAL_TEST_FILE,
+            CHEMICAL_SYMBOLS,
+            CUTOFF,
+            parity_file=parity_file,
+        )
         print(f"Force RMSE on test set: {rmse:.4f} kcal/mol/Å")
         sys.exit(0)
     if args.save_parity:
@@ -700,5 +718,10 @@ if __name__ == "__main__":
     augmented_size = compile_augmented_dataset(
         unc_results, added_file, args.model_dir, args.iter
     )
-    rmse = get_rmse(model_path, FINAL_TEST_FILE, CHEMICAL_SYMBOLS, CUTOFF)
+    rmse = get_rmse(
+        model_path,
+        FINAL_TEST_FILE,
+        CHEMICAL_SYMBOLS,
+        CUTOFF,
+    )
     print(f"Force RMSE on test set: {rmse:.4f} kcal/mol/Å")
