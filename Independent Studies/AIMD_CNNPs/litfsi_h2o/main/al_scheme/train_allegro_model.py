@@ -288,8 +288,6 @@ if __name__ == "__main__":
     if args.ensemble_mode:
         # Ensemble mode: Train ensembles (primary handled separately)
         # Ensembles (always use their fixed files and 450/50)
-        train_frames_ensemble = 450
-        val_frames_ensemble = 50
         for ensemble_id in range(NUM_ENSEMBLES):
             ensemble_dir = f"{ALLEGRO_TRAINED_MODEL_DIR_BASE}_{ensemble_id}"
             ensemble_deployed = os.path.join(ensemble_dir, "deployed.nequip.pth")
@@ -300,6 +298,12 @@ if __name__ == "__main__":
                 ensemble_file = (
                     f"aimd_trajectory_ensemble_{ensemble_id}_train_val.extxyz"
                 )
+                if not os.path.exists(ensemble_file):
+                    print(f"Ensemble file {ensemble_file} not found.")
+                    continue
+                size = len(read(ensemble_file, index=":"))
+                train_frames_ensemble = int(0.9 * size)
+                val_frames_ensemble = size - train_frames_ensemble
                 ensemble_config_path = prepare_allegro_config(
                     ensemble_dir,
                     ensemble_file,
