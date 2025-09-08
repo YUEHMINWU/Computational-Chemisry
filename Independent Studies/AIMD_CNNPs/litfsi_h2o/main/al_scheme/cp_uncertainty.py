@@ -106,21 +106,6 @@ class ConformalPrediction:
         return cp_uncertainty_test, self.qhat
 
 
-def split_test_calib(full_test_X, per_calib, seed=0):
-    """
-    Uniformly sample the test data at random to split into test and calibration.
-    """
-    np.random.seed(seed)
-    num_total = len(full_test_X)
-    num_calib = int(per_calib * num_total)
-    rand_idx = np.random.permutation(num_total)
-    calib_idx = rand_idx[:num_calib]
-    test_idx = rand_idx[num_calib:]
-    calib_X = [full_test_X[i] for i in calib_idx]
-    test_X = [full_test_X[i] for i in test_idx]
-    return test_X, calib_X, test_idx, calib_idx
-
-
 # Configuration
 CHEMICAL_SYMBOLS = ["Li", "F", "S", "O", "C", "N", "H"]
 CUTOFF = 6.0
@@ -247,6 +232,36 @@ def process_lammps_traj(pos_file, frc_file, thermo_file):
     return processed_frames
 
 
+def split_calib_test(full_test_X, true_calib_atoms, pos_tolerance=1e-5, seed=0):
+    """Match the true_calib structures to the full_test_X (MLIP MD trajectory) to split into test and calib."""
+    np.random.seed(seed)  # For reproducibility, though not used in matching
+    calib_X = []
+    calib_idx = []
+    matched = set()
+    for true_atom in tqdm(true_calib_atoms, desc="Matching calib frames"):
+        found = False
+        for j, frame in enumerate(full_test_X):
+            if j in matched:
+                continue
+            pos_rmse = np.sqrt(
+                np.mean((true_atom.get_positions() - frame.get_positions()) ** 2)
+            )
+            if pos_rmse < pos_tolerance:
+                calib_X.append(frame)
+                calib_idx.append(j)
+                matched.add(j)
+                found = True
+                break
+        if not found:
+            raise ValueError(
+                f"No matching frame found in trajectory for a calib structure with pos_tolerance {pos_tolerance}"
+            )
+    calib_idx = sorted(calib_idx)
+    test_idx = sorted(set(range(len(full_test_X))) - set(calib_idx))
+    test_X = [full_test_X[i] for i in test_idx]
+    return test_X, calib_X, test_idx, calib_idx
+
+
 def get_ensemble_uncertainties(
     chemical_symbols, cutoff, data_file, traj_files, iter_num
 ):
@@ -297,16 +312,11 @@ def get_ensemble_uncertainties(
     print(
         f"Subsampled {len(subsampled)} frames from MLIP trajectories for uncertainty detection."
     )
-    # Split into calib and test
-    per_calib = 0.1
-    test_X, calib_X, test_subidx, calib_subidx = split_test_calib(
-        subsampled, per_calib=per_calib
-    )
-    print(f"Split into {len(calib_X)} calib and {len(test_X)} test frames for UQ.")
-    # Load true calibration labels
+    # Load true calibration labels and structures
     true_calib_atoms = read(TRUE_CALIB_FILE, index=":")
-    if len(true_calib_atoms) != len(calib_X):
-        raise ValueError("Mismatch between MLIP calib frames and true_calib frames.")
+    # Split into test_X and calib_X by matching
+    test_X, calib_X, _, _ = split_calib_test(subsampled, true_calib_atoms)
+    print(f"Using {len(test_X)} test frames and {len(calib_X)} calib frames for UQ.")
     # For calib: collect per-atom residuals and heuristics
     calib_abs_err_per_atom_list = []
     calib_std_per_atom_list = []
@@ -324,9 +334,7 @@ def get_ensemble_uncertainties(
             continue
         forces_array = np.stack(pred_forces_list)  # (models, natoms, 3)
         mean_forces = np.mean(forces_array, axis=0)
-        true_forces = true_calib_atoms[
-            i
-        ].get_forces()  # DFT labels for corresponding frame
+        true_forces = true_calib_atoms[i].arrays["forces"]  # DFT labels
         abs_err_per_atom = np.mean(np.abs(true_forces - mean_forces), axis=1)
         calib_abs_err_per_atom_list.append(abs_err_per_atom)
         sqdev_per_model_per_atom = np.mean(
