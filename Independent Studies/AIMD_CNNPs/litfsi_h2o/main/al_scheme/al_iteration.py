@@ -165,7 +165,9 @@ def main(start_iter=0, save_parity_per_iter=False):
         parity_file = f"temp_parity_iter_{current_iter}.npy"
         if os.path.exists(parity_file):
             results = np.load(parity_file, allow_pickle=True).item()
-            rmse = np.sqrt(np.mean((results["true_force"] - results["pred_force"]) ** 2))
+            rmse = np.sqrt(
+                np.mean((results["true_force"] - results["pred_force"]) ** 2)
+            )
             print(f"Loaded RMSE from existing {parity_file}: {rmse:.4f}")
         else:
             rmse_cmd = [
@@ -177,14 +179,16 @@ def main(start_iter=0, save_parity_per_iter=False):
                 "--iter",
                 str(current_iter),
             ]
-            result = subprocess.run(rmse_cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(
+                rmse_cmd, capture_output=True, text=True, check=True
+            )
             rmse = parse_rmse_from_output(result.stdout)
         print(f"Current RMSE: {rmse:.4f}")
         if rmse < RMSE_THRESHOLD:
             print("RMSE threshold met. Stopping iterations.")
             break
 
-        # Step 2: Run MLIP-MD with primary on 3 init structs
+        # Step 2: Run MLIP-MD with primary on 5 init structs
         init_files = [
             os.path.join(INIT_STRUCT_DIR, f"init_struct_{i}.extxyz")
             for i in range(NUM_INIT_STRUCTS)
