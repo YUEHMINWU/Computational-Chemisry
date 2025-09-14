@@ -50,6 +50,7 @@ PRIMARY_TRAIN_VAL_FILE = (
 TRUE_CALIB_FILE = "true_calib.extxyz"
 TRUE_CALIB_FRAMES = 500
 MIN_DISTANCE_THRESHOLD = 0.8  # Angstrom, below this considered unphysical
+MAX_FORCE_THRESHOLD = 150.0  # kcal/mol/Å, above this eliminate from test
 
 
 def read_xyz_frames(file_path):
@@ -306,19 +307,37 @@ if __name__ == "__main__":
         999,  # some seed
         excluded_early,
     )
-    # Sample combined test from late (no exclusions, separate pool)
-    print("\nGenerating combined test dataset from last 5 ps")
+    # Pre-filter late_atoms for low max_force
+    low_force_late = sorted(
+        [atom for atom in late_atoms if atom.info["max_force"] <= MAX_FORCE_THRESHOLD],
+        key=lambda a: a.info["step"],
+    )
+    num_low_force = len(low_force_late)
+    print(
+        f"\nFiltered {num_low_force} frames with max_force <= {MAX_FORCE_THRESHOLD} from last 5 ps."
+    )
+    if num_low_force < COMBINED_TEST_FRAMES:
+        print(
+            f"Warning: Only {num_low_force} low-force frames available, using all for test."
+        )
+        test_atoms_to_use = low_force_late
+        test_frames_to_use = num_low_force
+    else:
+        test_atoms_to_use = low_force_late
+        test_frames_to_use = COMBINED_TEST_FRAMES
+    # Sample combined test from filtered low-force late
+    print("\nGenerating combined test dataset from last 5 ps (low-force frames)")
     test_excluded = set()  # No exclusions for test
     test_selected_steps = sample_dataset(
-        late_atoms,
+        test_atoms_to_use,
         FINAL_TEST_FILE,
-        COMBINED_TEST_FRAMES,
+        test_frames_to_use,
         42,  # Fixed seed for reproducibility
         test_excluded,
     )
     # Sample initial structures for MLIP-MD from early (random)
     print("\nGenerating random initial structures for MLIP-MD")
-    init_structs_dir = "init_structs"
+    init_structs_dir = "init_structs_4test"
     init_struct_files = sample_init_structs(
         early_atoms,
         init_structs_dir,
@@ -357,11 +376,11 @@ if __name__ == "__main__":
     all_selected_energies_per_atom.extend(
         [frame.info["energy_per_atom"] for frame in combined_test]
     )
-    # Print steps where max_force > 300 in test dataset and check if unphysical
-    print("\nAnalysis of high max_force (>300) frames in test dataset:")
+    # Print steps where max_force > 150 in test dataset and check if unphysical
+    print("\nAnalysis of high max_force (>150) frames in test dataset:")
     high_force_info = []
     for frame in combined_test:
-        if frame.info["max_force"] > 300:
+        if frame.info["max_force"] > 150:
             is_unphysical, min_dist = is_unphysical_structure(frame)
             print(
                 f"Step: {frame.info['step']}, Max Force: {frame.info['max_force']:.2f}, Min Distance: {min_dist:.2f} Å, Unphysical: {is_unphysical}"
