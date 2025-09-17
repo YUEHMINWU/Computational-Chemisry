@@ -40,7 +40,6 @@ def models_already_trained(iter_num):
     )
     if not os.path.exists(primary_path):
         return False
-
     # For iter 0, check ensembles
     if iter_num == 0:
         for i in range(NUM_ENSEMBLES):
@@ -49,7 +48,6 @@ def models_already_trained(iter_num):
             )
             if not os.path.exists(ensemble_path):
                 return False
-
     return True
 
 
@@ -79,11 +77,9 @@ def main(start_iter=0, save_parity_per_iter=False):
     current_iter = start_iter
     while current_iter < NUM_ITERATIONS:
         print(f"\n--- Iteration {current_iter + 1}/{NUM_ITERATIONS} ---")
-
         primary_model_dir = (
             f"../results/allegro_model_output_primary_iter_{current_iter}"
         )
-
         # Step 1: Train models
         if models_already_trained(current_iter):
             print(
@@ -116,7 +112,6 @@ def main(start_iter=0, save_parity_per_iter=False):
                     subprocess.run(primary_train_cmd, check=True, capture_output=False)
                 else:
                     print("Primary model already trained. Skipping.")
-
                 # Check if all ensembles exist
                 all_ensembles_trained = True
                 for i in range(NUM_ENSEMBLES):
@@ -126,7 +121,6 @@ def main(start_iter=0, save_parity_per_iter=False):
                     if not os.path.exists(ensemble_path):
                         all_ensembles_trained = False
                         break
-
                 if not all_ensembles_trained:
                     ensemble_cmd = [
                         "python",
@@ -160,7 +154,6 @@ def main(start_iter=0, save_parity_per_iter=False):
                     str(val_frames),
                 ]
                 subprocess.run(train_cmd, check=True, capture_output=False)
-
         # Step 1.5: Check RMSE with cp_uncertainty.py before proceeding
         parity_file = f"temp_parity_iter_{current_iter}.npy"
         if os.path.exists(parity_file):
@@ -187,7 +180,6 @@ def main(start_iter=0, save_parity_per_iter=False):
         if rmse < RMSE_THRESHOLD:
             print("RMSE threshold met. Stopping iterations.")
             break
-
         # Step 2: Run MLIP-MD with primary on 5 init structs
         init_files = [
             os.path.join(INIT_STRUCT_DIR, f"init_struct_{i}.extxyz")
@@ -210,7 +202,6 @@ def main(start_iter=0, save_parity_per_iter=False):
                         f"MLIP-MD for {label} does not exist or incomplete. (Re)running."
                     )
                     delete_simulation_files(label)
-
                 # Run in a loop until success
                 success = False
                 while not success:
@@ -230,7 +221,6 @@ def main(start_iter=0, save_parity_per_iter=False):
                         "--model_file",
                         f"{primary_model_dir}/deployed.nequip.pth",
                     ]
-
                     # Start the process non-blocking, in a new session for group killing
                     process = subprocess.Popen(
                         mlpmd_cmd,
@@ -238,7 +228,6 @@ def main(start_iter=0, save_parity_per_iter=False):
                         stderr=subprocess.PIPE,
                         preexec_fn=os.setsid,
                     )
-
                     # Wait for completion
                     try:
                         stdout, stderr = process.communicate()
@@ -263,7 +252,33 @@ def main(start_iter=0, save_parity_per_iter=False):
                                 os.killpg(process.pid, signal.SIGKILL)
                         delete_simulation_files(label)
                         # Continue to rerun
-
+        # Step 2.5: Select and label calib frames
+        calib_frames_file = f"calib_frames_iter_{current_iter}.extxyz"
+        calib_labeled_file = f"calib_labeled_iter_{current_iter}.extxyz"
+        if os.path.exists(calib_labeled_file):
+            print("Calibration frames already selected and labeled. Skipping.")
+        else:
+            if not os.path.exists(calib_frames_file):
+                select_cmd = [
+                    "python",
+                    "cp_uncertainty.py",
+                    "--select_calib",
+                    "--iter",
+                    str(current_iter),
+                    "--traj_dir",
+                    MD_RESULTS_DIR,
+                ]
+                subprocess.run(select_cmd, check=True)
+            # Label calib frames
+            dft_calib_cmd = [
+                "python",
+                "dft_label.py",
+                "--iter",
+                str(current_iter),
+                "--mode",
+                "calib",
+            ]
+            subprocess.run(dft_calib_cmd, check=True)
         # Step 3: Run CP uncertainty to get augmented_dataset_iter{i}.extxyz
         unc_file = f"unc_data_iter_{current_iter}.npy"
         augmented_dataset_file = f"augmented_dataset_iter{current_iter}.extxyz"
@@ -280,7 +295,7 @@ def main(start_iter=0, save_parity_per_iter=False):
                 "--model_dir",
                 primary_model_dir,
             ]
-            subprocess.run(cp_cmd, check=True, capture_output=False)
+            subprocess.run(cp_cmd, check=True)
         else:
             print("Performing UQ and augmentation.")
             cp_cmd = [
@@ -293,8 +308,7 @@ def main(start_iter=0, save_parity_per_iter=False):
                 "--model_dir",
                 primary_model_dir,
             ]
-            subprocess.run(cp_cmd, check=True, capture_output=False)
-
+            subprocess.run(cp_cmd, check=True)
         # Step 4: Run DFT labeling on augmented_dataset_iter{i}.extxyz
         dft_labeled_file = f"augmented_dataset_iter{current_iter}_dft.extxyz"
         combined_file = f"augmented_primary_train_val_iter_{current_iter}.extxyz"
@@ -306,13 +320,12 @@ def main(start_iter=0, save_parity_per_iter=False):
                 "dft_label.py",
                 "--iter",
                 str(current_iter),
+                "--mode",
+                "augment",
             ]
-            subprocess.run(dft_cmd, check=True, capture_output=False)
-
+            subprocess.run(dft_cmd, check=True)
         current_iter += 1
-
     print("\nAL loop complete.")
-
     # After loop: Generate final_parity.npy using the final primary model
     print("\nGenerating final parity data...")
     if rmse < RMSE_THRESHOLD:
@@ -330,7 +343,7 @@ def main(start_iter=0, save_parity_per_iter=False):
         "--model_dir",
         final_primary_dir,
     ]
-    subprocess.run(parity_cmd, check=True, capture_output=False)
+    subprocess.run(parity_cmd, check=True)
 
 
 if __name__ == "__main__":
