@@ -113,7 +113,6 @@ NUM_ENSEMBLES = 5
 SUBSAMPLE_RATE = 1
 FINAL_TEST_FILE = "final_test.extxyz"
 PRIMARY_TRAIN_VAL_FILE = "aimd_trajectory_primary_train_val.extxyz"
-TRUE_CALIB_FILE = "true_calib.extxyz"
 MD_RESULTS_DIR = "../results"
 ALPHA = 0.1  # Corresponds to 90% confidence
 PRIMARY_MODEL_DIR = "../results/allegro_model_output_primary"
@@ -199,8 +198,8 @@ def process_lammps_traj(pos_file, frc_file, thermo_file):
         # print(f"Read {len(pos_atoms_list)} position frames from {pos_file}")
     except Exception as e:
         print("ERROR: Failed to parse position LAMMPS dump file using ASE.")
-        print(f"  File: {pos_file}")
-        print(f"  ASE Error: {e}")
+        print(f" File: {pos_file}")
+        print(f" ASE Error: {e}")
         return []
     # Manually parse forces since dump may lack positions
     frc_forces = parse_forces_dump(frc_file)
@@ -214,8 +213,12 @@ def process_lammps_traj(pos_file, frc_file, thermo_file):
     dump_freq = 100  # Assuming dump frequency is 100 steps, starting at step 0.
     processed_frames = []
     for i, frame in enumerate(pos_atoms_list):
+        forces = frc_forces[i]
+        if np.all(forces == 0):
+            print(f"Skipping frame {i} with zero forces.")
+            continue
         # Set forces from manual parse
-        frame.arrays["forces"] = frc_forces[i]
+        frame.arrays["forces"] = forces
         # Infer step and assign energy from the thermo log.
         current_step = i * dump_freq
         energy = energy_map.get(current_step)
@@ -232,34 +235,40 @@ def process_lammps_traj(pos_file, frc_file, thermo_file):
     return processed_frames
 
 
-def split_calib_test(full_test_X, true_calib_atoms, pos_tolerance=1e-5, seed=0):
-    """Match the true_calib structures to the full_test_X (MLIP MD trajectory) to split into test and calib."""
-    np.random.seed(seed)  # For reproducibility, though not used in matching
-    calib_X = []
-    calib_idx = []
-    matched = set()
-    for true_atom in tqdm(true_calib_atoms, desc="Matching calib frames"):
-        found = False
-        for j, frame in enumerate(full_test_X):
-            if j in matched:
-                continue
-            pos_rmse = np.sqrt(
-                np.mean((true_atom.get_positions() - frame.get_positions()) ** 2)
-            )
-            if pos_rmse < pos_tolerance:
-                calib_X.append(frame)
-                calib_idx.append(j)
-                matched.add(j)
-                found = True
+def parse_testx_forces(extxyz_file):
+    """Manually parse forces from an extxyz file."""
+    frames = []
+    with open(extxyz_file, "r") as f:
+        lines = f.readlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
+        try:
+            natoms = int(line)
+        except ValueError:
+            i += 1
+            continue
+        i += 1
+        # Skip comment line
+        i += 1
+        forces = []
+        for j in range(natoms):
+            parts = lines[i + j].strip().split()
+            if len(parts) < 7:
+                print(f"Invalid line in {extxyz_file}: {lines[i + j]}")
+                forces = []  # Reset to skip frame
                 break
-        if not found:
-            raise ValueError(
-                f"No matching frame found in trajectory for a calib structure with pos_tolerance {pos_tolerance}"
-            )
-    calib_idx = sorted(calib_idx)
-    test_idx = sorted(set(range(len(full_test_X))) - set(calib_idx))
-    test_X = [full_test_X[i] for i in test_idx]
-    return test_X, calib_X, test_idx, calib_idx
+            fx = float(parts[4])
+            fy = float(parts[5])
+            fz = float(parts[6])
+            forces.append([fx, fy, fz])
+        if forces:
+            frames.append(np.array(forces))
+        i += natoms
+    return frames
 
 
 def get_ensemble_uncertainties(
@@ -312,10 +321,30 @@ def get_ensemble_uncertainties(
     print(
         f"Subsampled {len(subsampled)} frames from MLIP trajectories for uncertainty detection."
     )
+    # Load calib indices to exclude from test_X
+    calib_indices_file = f"calib_indices_iter_{iter_num}.npy"
+    if os.path.exists(calib_indices_file):
+        calib_indices = set(np.load(calib_indices_file))
+        test_indices = [k for k in range(len(subsampled)) if k not in calib_indices]
+        test_X = [subsampled[k] for k in test_indices]
+    else:
+        test_X = subsampled
     # Load true calibration labels and structures
-    true_calib_atoms = read(TRUE_CALIB_FILE, index=":")
-    # Split into test_X and calib_X by matching
-    test_X, calib_X, _, _ = split_calib_test(subsampled, true_calib_atoms)
+    true_calib_file = f"calib_labeled_iter_{iter_num}.extxyz"
+    true_calib_atoms = read(true_calib_file, index=":")
+    true_calib_forces = [atoms.get_forces() for atoms in true_calib_atoms]
+    if len(true_calib_forces) != len(true_calib_atoms):
+        raise ValueError(
+            "Mismatch in number of frames between parsed forces and ASE read structures."
+        )
+    calib_X = true_calib_atoms
+    # Parse true test forces and filter
+    true_all_forces = parse_testx_forces(temp_file)
+    true_sub_forces = true_all_forces[::SUBSAMPLE_RATE]
+    if os.path.exists(calib_indices_file):
+        true_test_forces = [true_sub_forces[k] for k in test_indices]
+    else:
+        true_test_forces = true_sub_forces
     print(f"Using {len(test_X)} test frames and {len(calib_X)} calib frames for UQ.")
     # For calib: collect per-atom residuals and heuristics
     calib_abs_err_per_atom_list = []
@@ -334,7 +363,7 @@ def get_ensemble_uncertainties(
             continue
         forces_array = np.stack(pred_forces_list)  # (models, natoms, 3)
         mean_forces = np.mean(forces_array, axis=0)
-        true_forces = true_calib_atoms[i].arrays["forces"]  # DFT labels
+        true_forces = true_calib_forces[i]  # DFT labels
         abs_err_per_atom = np.mean(np.abs(true_forces - mean_forces), axis=1)
         calib_abs_err_per_atom_list.append(abs_err_per_atom)
         sqdev_per_model_per_atom = np.mean(
@@ -343,8 +372,16 @@ def get_ensemble_uncertainties(
         var_per_atom = np.mean(sqdev_per_model_per_atom, axis=0)
         std_per_atom = np.sqrt(var_per_atom)
         calib_std_per_atom_list.append(std_per_atom)
-    calib_residual_flat = np.concatenate(calib_abs_err_per_atom_list)
-    calib_heuristic_flat = np.concatenate(calib_std_per_atom_list)
+    calib_residual_flat = (
+        np.concatenate(calib_abs_err_per_atom_list)
+        if calib_abs_err_per_atom_list
+        else np.array([])
+    )
+    calib_heuristic_flat = (
+        np.concatenate(calib_std_per_atom_list)
+        if calib_std_per_atom_list
+        else np.array([])
+    )
     # Fit CP
     cp = ConformalPrediction(alpha=ALPHA)
     cp.fit(calib_residual_flat, calib_heuristic_flat)
@@ -354,7 +391,7 @@ def get_ensemble_uncertainties(
     test_heuristic_avg = []
     test_rmse = []
     test_natoms = []
-    for atoms in tqdm(test_X, desc="Processing test frames"):
+    for i, atoms in enumerate(tqdm(test_X, desc="Processing test frames")):
         pred_forces_list = []
         for calc in calculators:
             atoms.calc = calc
@@ -368,7 +405,9 @@ def get_ensemble_uncertainties(
             continue
         forces_array = np.stack(pred_forces_list)
         mean_forces = np.mean(forces_array, axis=0)
-        true_forces = atoms.arrays["forces"]  # Original MLIP forces (for RMSE, not CP)
+        true_forces = true_test_forces[i]
+        if np.all(true_forces == 0):
+            continue
         rmse = np.sqrt(np.mean((true_forces - mean_forces) ** 2))
         test_rmse.append(rmse)
         sqdev_per_model_per_atom = np.mean(
@@ -442,8 +481,6 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
     sorted_high_unc_idx = high_unc_indices[
         np.argsort(unc_results["max_cal_unc_scores"][high_unc_indices])[::-1]
     ]
-    # Load DFT frames for RMSE and uncertainty calculation (not for labeling)
-    true_test_atoms = read(FINAL_TEST_FILE, index=":")
     # Load ensemble models for computing errors and uncertainties
     calculators = []
     for i in range(NUM_ENSEMBLES):
@@ -475,37 +512,11 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
     print(
         f"Screening {len(sorted_high_unc_idx)} high-uncertainty candidates for physical realism..."
     )
-    pos_tolerance = 1e-5  # Tolerance for position RMSE in Å
     for idx in sorted_high_unc_idx:
         frame = unc_results["test_frames"][idx]
         if not is_physical(frame):
             unphysical_frames_rejected += 1
             continue
-        # Find best matching DFT frame for RMSE/unc calculation (no labeling)
-        best_dft_idx = None
-        min_rmse = float("inf")
-        for dft_idx, dft_frame in enumerate(true_test_atoms):
-            dft_pos = dft_frame.get_positions()
-            pos_rmse = np.sqrt(np.mean((frame.get_positions() - dft_pos) ** 2))
-            if pos_rmse < pos_tolerance and pos_rmse < min_rmse:
-                min_rmse = pos_rmse
-                best_dft_idx = dft_idx
-        if best_dft_idx is None:
-            print(f"No matching DFT frame for MLIP idx {idx}; skipping.")
-            continue
-        dft_frame = true_test_atoms[best_dft_idx]
-        dft_energy_per_atom = dft_frame.info.get("energy", 0) / num_atoms
-        # Check DFT energy
-        if dft_energy_per_atom > MAX_ALLOWED_ENERGY_KCAL_MOL_per_atom:
-            unphysical_frames_rejected += 1
-            continue
-        dft_forces = dft_frame.get_forces()
-        # Check max DFT force
-        if np.any(dft_forces):
-            max_force = np.max(np.linalg.norm(dft_forces, axis=1))
-            if max_force > MAX_ALLOWED_FORCE_KCAL_MOL_A:
-                unphysical_frames_rejected += 1
-                continue
         # Compute ensemble predictions for plot data
         pred_forces_list = []
         for calc in calculators:
@@ -520,8 +531,6 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
             continue
         forces_array = np.stack(pred_forces_list)
         mean_forces = np.mean(forces_array, axis=0)
-        # Compute per-atom error (mean abs over components)
-        abs_err_per_atom = np.mean(np.abs(dft_forces - mean_forces), axis=1)
         # Compute per-atom heuristic unc
         sqdev_per_model_per_atom = np.mean(
             (forces_array - mean_forces[None, :, :]) ** 2, axis=2
@@ -531,7 +540,6 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
         # Apply CP
         cp_unc_per_atom = std_per_atom * qhat
         # Collect data
-        per_atom_err.extend(abs_err_per_atom)
         per_atom_unc.extend(cp_unc_per_atom)
         # No DFT labeling; add original frame if passes position tolerance (already checked)
         high_unc_frames.append(frame)
@@ -543,7 +551,6 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
     # Save data for plotting
     plot_data = {
         "atomic_force_uncertainty": np.array(per_atom_unc),
-        "atomic_force_rmse": np.array(per_atom_err),
     }
     plot_file = f"unc_rmse_plot_iter_{iter_num}.npy"
     np.save(plot_file, plot_data)
@@ -618,6 +625,53 @@ def get_rmse(model_path, test_file, chemical_symbols, cutoff, parity_file=None):
     return force_rmse
 
 
+def select_calib_frames(args):
+    iter_num = args.iter
+    temp_file = f"temp_mlpmd_iter_{iter_num}.extxyz"
+    traj_dir = args.traj_dir
+    pos_files = sorted(
+        glob.glob(os.path.join(traj_dir, f"iter{iter_num}_*-md-pos.xyz"))
+    )
+    frc_files = sorted(
+        glob.glob(os.path.join(traj_dir, f"iter{iter_num}_*-md-frc.xyz"))
+    )
+    thermo_files = sorted(
+        glob.glob(os.path.join(traj_dir, f"iter{iter_num}_*-md-thermo.log"))
+    )
+    if not (len(pos_files) == len(frc_files) == len(thermo_files)):
+        raise FileNotFoundError(
+            "Mismatch between pos, frc, and thermo files for this iteration."
+        )
+    traj_files = list(zip(pos_files, frc_files, thermo_files))
+    if os.path.exists(temp_file):
+        print(f"Loading combined trajectory from {temp_file}...")
+        all_frames = read(temp_file, index=":")
+    else:
+        print(f"Combining trajectories into {temp_file}...")
+        all_frames = []
+        for pos_file, frc_file, thermo_file in traj_files:
+            frames = process_lammps_traj(pos_file, frc_file, thermo_file)
+            all_frames.extend(frames)
+            print(f"Processed {len(frames)} frames from {pos_file}")
+        if all_frames:
+            write(temp_file, all_frames)
+            print(f"Saved combined trajectory to {temp_file}")
+        else:
+            raise ValueError(
+                "No frames processed from trajectories. Check file formats and contents."
+            )
+    subsampled = all_frames[::SUBSAMPLE_RATE]
+    n_calib = max(1, int(0.1 * len(subsampled)))
+    np.random.seed(0)  # For reproducibility
+    indices = np.random.permutation(len(subsampled))
+    calib_indices = indices[:n_calib]
+    calib_frames = [subsampled[j] for j in calib_indices]
+    calib_file = f"calib_frames_iter_{iter_num}.extxyz"
+    write(calib_file, calib_frames)
+    np.save(f"calib_indices_iter_{iter_num}.npy", calib_indices)
+    print(f"Selected and saved {len(calib_frames)} calib frames to {calib_file}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run CP uncertainty for AL augmentation"
@@ -649,6 +703,11 @@ if __name__ == "__main__":
         help="Perform augmentation only (assumes UQ done)",
     )
     parser.add_argument(
+        "--select_calib",
+        action="store_true",
+        help="Select calibration frames from trajectories",
+    )
+    parser.add_argument(
         "--iter",
         type=int,
         default=None,
@@ -661,6 +720,12 @@ if __name__ == "__main__":
         help="Directory of the primary model to use for RMSE",
     )
     args = parser.parse_args()
+    if args.select_calib:
+        if args.iter is None:
+            print("Error: --iter required for --select_calib.")
+            sys.exit(1)
+        select_calib_frames(args)
+        sys.exit(0)
     model_path = os.path.join(args.model_dir, "deployed.nequip.pth")
     if args.compute_rmse:
         # Compute and print RMSE only
