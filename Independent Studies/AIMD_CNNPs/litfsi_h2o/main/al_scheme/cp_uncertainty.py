@@ -435,6 +435,7 @@ def get_ensemble_uncertainties(
         "rmse_scores": np.array(test_rmse),
         "frame_indices": np.arange(len(test_X)),
         "test_frames": test_X,
+        "true_test_forces": true_test_forces,
     }
     # Detach calculators to make results serializable
     for frame in results["test_frames"]:
@@ -469,8 +470,8 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
             base_frames = read(PRIMARY_TRAIN_VAL_FILE, index=":")
     else:
         base_frames = read(PRIMARY_TRAIN_VAL_FILE, index=":")
-    low = 3.0
-    upp = 8.0
+    low = 42.0
+    upp = 50.0
     print(
         f"Calibrated uncertainty thresholds: low={low:.1f}, upp={upp:.1f} (e.g., kcal/mol·Å)"
     )
@@ -481,6 +482,28 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
     sorted_high_unc_idx = high_unc_indices[
         np.argsort(unc_results["max_cal_unc_scores"][high_unc_indices])[::-1]
     ]
+    # If true_test_forces not present (old save), parse from temp_file
+    if "true_test_forces" not in unc_results:
+        print("Missing 'true_test_forces' in unc_results. Parsing from temp_file...")
+        temp_file = f"temp_mlpmd_iter_{iter_num}.extxyz"
+        if not os.path.exists(temp_file):
+            raise FileNotFoundError(
+                f"temp_file {temp_file} not found. Need to regenerate."
+            )
+        true_all_forces = parse_testx_forces(temp_file)
+        true_sub_forces = true_all_forces[::SUBSAMPLE_RATE]
+        calib_indices_file = f"calib_indices_iter_{iter_num}.npy"
+        if os.path.exists(calib_indices_file):
+            calib_indices = set(np.load(calib_indices_file))
+            test_indices = [
+                k for k in range(len(true_sub_forces)) if k not in calib_indices
+            ]
+            unc_results["true_test_forces"] = [true_sub_forces[k] for k in test_indices]
+        else:
+            unc_results["true_test_forces"] = true_sub_forces
+        print(
+            f"Parsed and added true_test_forces for {len(unc_results['true_test_forces'])} test frames."
+        )
     # Load ensemble models for computing errors and uncertainties
     calculators = []
     for i in range(NUM_ENSEMBLES):
@@ -504,7 +527,7 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
     else:
         qhat = 1.0
     # Collect data for plotting
-    per_atom_err = []
+    per_atom_rmse = []
     per_atom_unc = []
     high_unc_frames = []
     physical_frames_added = 0
@@ -531,6 +554,9 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
             continue
         forces_array = np.stack(pred_forces_list)
         mean_forces = np.mean(forces_array, axis=0)
+        true_forces = unc_results["true_test_forces"][idx]
+        atom_rmse = np.sqrt(np.mean((true_forces - mean_forces) ** 2, axis=1))
+        per_atom_rmse.extend(atom_rmse)
         # Compute per-atom heuristic unc
         sqdev_per_model_per_atom = np.mean(
             (forces_array - mean_forces[None, :, :]) ** 2, axis=2
@@ -551,6 +577,7 @@ def compile_augmented_dataset(unc_results, added_file, model_dir, iter_num):
     # Save data for plotting
     plot_data = {
         "atomic_force_uncertainty": np.array(per_atom_unc),
+        "atomic_force_rmse": np.array(per_atom_rmse),
     }
     plot_file = f"unc_rmse_plot_iter_{iter_num}.npy"
     np.save(plot_file, plot_data)
@@ -791,10 +818,3 @@ if __name__ == "__main__":
     augmented_size = compile_augmented_dataset(
         unc_results, added_file, args.model_dir, args.iter
     )
-    rmse = get_rmse(
-        model_path,
-        FINAL_TEST_FILE,
-        CHEMICAL_SYMBOLS,
-        CUTOFF,
-    )
-    print(f"Force RMSE on test set: {rmse:.4f} kcal/mol/Å")
