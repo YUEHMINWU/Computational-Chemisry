@@ -1,19 +1,1 @@
-ncnucpu2loc() {
-  if [ $# -ne 2 ]; then
-    echo "Usage: ncnu_download_dir <remote_path> <local_path>"
-    return 1
-  fi
-  scp -r -i ~/Downloads/nuser08/id_ed25519 \
-      -o "ProxyCommand=ssh -i ~/Downloads/nuser08/id_ed25519 -p 9210 nuser08@163.22.23.73 -W %h:%p" \
-      nuser08@10.88.90.187:"$1" "$2"
-}
 
-loc2ncnucpu() {
-  if [ $# -ne 2 ]; then
-    echo "Usage: ncnu_upload_dir <local_path> <remote_path>"
-    return 1
-  fi
-  scp -r -i ~/Downloads/nuser08/id_ed25519 \
-      -o "ProxyCommand=ssh -i ~/Downloads/nuser08/id_ed25519 -p 9210 nuser08@163.22.23.73 -W %h:%p" \
-      "$1" nuser08@10.88.90.187:"$2"
-}
