@@ -21,8 +21,8 @@ gmx mdrun -ntmpi 1 -v -deffnm npt
 gmx grompp -f nvt_npt.mdp -c npt.gro -p litfsi_h2o.top -o nvt_npt.tpr -maxwarn 1
 gmx mdrun -ntmpi 1 -s nvt_npt.tpr -v -deffnm nvt_npt
 
-5. Check the density of system:
+4. Check the density of system:
 gmx energy -f npt.edr -o density.xvg # Select 'Density' from the menu
 
-6. Transform gro file (last frame) to final pdb file after npt simulation:
+5. Transform gro file (last frame) to final pdb file after npt simulation:
 gmx editconf -f npt.gro -o final_npt.pdb # final_npt.pdb may be lack of element symbol, so please use pdb_ed.py before running aimd
