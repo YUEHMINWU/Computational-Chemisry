@@ -13,6 +13,9 @@ export OMP_NUM_THREADS=8
 gmx grompp -f npt.mdp -c nvt.gro -p litfsi_h2o.top -o npt.tpr -maxwarn 1
 gmx mdrun -v -deffnm npt
 
+3.1. Run in cluster:
+
+
 4. Check the density of system:
 gmx energy -f npt.edr -o density.xvg # Select 'Density' from the menu
 
