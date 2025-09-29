@@ -1,115 +1,106 @@
 &GLOBAL
-  PROJECT litfsi_h2o_relax
+  PROJECT litfsi_h2o_fc
   RUN_TYPE MD            
-  PRINT_LEVEL MEDIUM     
+  PRINT_LEVEL LOW     
 &END GLOBAL
 
 &MOTION
-    &MD
-      ENSEMBLE NVT
-      STEPS 10000  
-      TIMESTEP 0.5  
-      TEMPERATURE 298
-      &THERMOSTAT
-        TYPE NOSE
-        REGION GLOBAL
-        &NOSE
-          TIMECON 100.0
-        &END NOSE
-      &END THERMOSTAT
-    &END MD
-    &PRINT
-        &TRAJECTORY
-            FILENAME =../results/litfsi_h2o_relax-pos.xyz
-            &EACH
-            MD 1  
-            &END EACH
-        &END TRAJECTORY
-        &VELOCITIES
-            FILENAME =../results/itfsi_h2o_relax-vel.xyz
-            &EACH
-            MD 1
-            &END EACH
-        &END VELOCITIES
-        &FORCES
-            FILENAME =../results/itfsi_h2o_relax-frc.xyz
-            &EACH
-            MD 1
-            &END EACH
-        &END FORCES
-    &END PRINT
-    &PRINT
-      &TRAJECTORY
-        FILENAME =../results/litfsi_h2o_relax.pdb
-        FORMAT PDB
-        &EACH
-          MD 1000
-        &END EACH
-      &END TRAJECTORY
-    &END PRINT
+  &MD
+    ENSEMBLE NVT
+    STEPS 40000  
+    TIMESTEP 0.5  
+    TEMPERATURE 298.15
+    &THERMOSTAT
+      &NOSE
+        LENGTH 3
+        YOSHIDA 3
+        TIMECON 100.0
+        MULTIPLE_TIME_STEPS 2
+      &END NOSE
+    &END THERMOSTAT
+  &END MD
+  &PRINT
+    &TRAJECTORY
+      FILENAME =../results/litfsi_h2o-pos.xyz
+      &EACH
+      MD 1
+      &END EACH
+    &END TRAJECTORY
+    &VELOCITIES
+      FILENAME =../results/litfsi_h2o-vel.xyz
+      &EACH
+      MD 1
+      &END EACH
+    &END VELOCITIES
+    &FORCES
+      FILENAME =../results/litfsi_h2o-frc.xyz
+      &EACH
+      MD 1
+      &END EACH
+    &END FORCES
+  &END PRINT
 &END MOTION
 
 &FORCE_EVAL
-  METHOD QS               
+  METHOD QS    
   &DFT
     BASIS_SET_FILE_NAME /opt/homebrew/share/cp2k/data/BASIS_MOLOPT
-    POTENTIAL_FILE_NAME /opt/homebrew/share/cp2k/data/GTH_POTENTIALS
-    LSD F                                      
-    CHARGE 0                                   
-    MULTIPLICITY 1                             
+    POTENTIAL_FILE_NAME /opt/homebrew/share/cp2k/data/GTH_POTENTIALS                            
+    CHARGE 0                                                               
     &MGRID
-      CUTOFF 400                            
-      REL_CUTOFF 50                         
+      CUTOFF 400                                                  
       NGRIDS 5                                 
     &END MGRID
     &QS
-      METHOD GPW                               
-      EPS_DEFAULT 1.0E-10                                                 
-      EXTRAPOLATION ASPC                       
-      EXTRAPOLATION_ORDER 4                   
+      EPS_DEFAULT     1.0000000000000000E-13
+      EXTRAPOLATION  ASPC
+      EXTRAPOLATION_ORDER  2                  
     &END QS
     &SCF
-      SCF_GUESS ATOMIC                         
-      EPS_SCF 1.0E-6                           
-      MAX_SCF 100
+      SCF_GUESS ATOMIC                                                   
+      MAX_SCF 300
       IGNORE_CONVERGENCE_FAILURE                              
       &OT                                      
         MINIMIZER DIIS                         
-        PRECONDITIONER FULL_ALL                
-        ALGORITHM IRAC                         
+        PRECONDITIONER NONE                                        
       &END OT
-      &OUTER_SCF ON                            
-        EPS_SCF 1.0E-6                         
-        MAX_SCF 15                             
+      &OUTER_SCF ON                                                    
+        MAX_SCF 10                            
       &END OUTER_SCF
     &END SCF
-    &XC                                        
-      &XC_FUNCTIONAL BLYP                       
+    &XC
+      DENSITY_CUTOFF     1.0000000000000000E-10
+      GRADIENT_CUTOFF     1.0000000000000000E-10
+      TAU_CUTOFF     1.0000000000000000E-10
+      &XC_GRID
+        XC_SMOOTH_RHO  NN10
+        XC_DERIV  SPLINE2_SMOOTH
+      &END XC_GRID
+      &XC_FUNCTIONAL  NO_SHORTCUT
+        &BECKE88  T
+        &END BECKE88
+        &LYP  T
+        &END LYP
       &END XC_FUNCTIONAL
-      &VDW_POTENTIAL                           
-        POTENTIAL_TYPE PAIR_POTENTIAL
+      &VDW_POTENTIAL
+        POTENTIAL_TYPE  PAIR_POTENTIAL
         &PAIR_POTENTIAL
-          TYPE DFTD3(BJ)                       
-          CALCULATE_C9_TERM .TRUE.
-          REFERENCE_C9_TERM .TRUE.
-          LONG_RANGE_CORRECTION .TRUE.
-          PARAMETER_FILE_NAME dftd3.dat        
+          TYPE  DFTD3
+          R_CUTOFF     1.0583544200000000E+01
           REFERENCE_FUNCTIONAL BLYP
+          PARAMETER_FILE_NAME dftd3.dat        
         &END PAIR_POTENTIAL
       &END VDW_POTENTIAL
     &END XC
-    &POISSON
-      PERIODIC XYZ                             
-    &END POISSON
   &END DFT
   &SUBSYS
     &CELL
-      ABC 14.936 14.936 14.936                       
-      PERIODIC XYZ                             
+      ABC 14.936 14.936 14.936
+      MULTIPLE_UNIT_CELL  1 1 1                           
     &END CELL
     &TOPOLOGY
       COORD_FILE_FORMAT PDB                    
-      COORD_FILE_NAME ../data/gro_md/final_npt_elements.pdb          
+      COORD_FILE_NAME ../data/gro_md/final_nvt_npt_elements.pdb          
       CONNECTIVITY OFF                         
     &END TOPOLOGY
     &KIND Li
