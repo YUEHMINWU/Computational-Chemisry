@@ -16,33 +16,19 @@ SPECIES = ["Li", "F", "S", "O", "C", "N", "H"]  # LiTFSI water system elements
 N_ATOMS = 244  # Total number of atoms in the system
 RUNS = [
     {
-        "pos": "../results/litfsi_h2o_relax-pos.xyz",
-        "frc": "../results/litfsi_h2o_relax-frc.xyz",
-        "ener": "litfsi_h2o_relax-1.ener",
-        "start_step": 0,
-        "end_step": 7500,
-    },
-    {
-        "pos": "../results/litfsi_h2o_prod_re7500-pos.xyz",
-        "frc": "../results/litfsi_h2o_prod_re7500-frc.xyz",
-        "ener": "litfsi_h2o_prod_re7500-1.ener",
-        "start_step": 7501,
-        "end_step": 20500,
-    },
-    {
-        "pos": "../results/litfsi_h2o_prod_re20500-pos.xyz",
-        "frc": "../results/litfsi_h2o_prod_re20500-frc.xyz",
-        "ener": "litfsi_h2o_prod_re20500-1.ener",
-        "start_step": 20501,
-        "end_step": 39999,
-    },
+        "pos": "../results/litfsi_h2o-pos.xyz",
+        "frc": "../results/litfsi_h2o-frc.xyz",
+        "ener": "litfsi_h2o_fc-1.ener",
+        "start_step": 1,
+        "end_step": 40000,
+    }
 ]
 PRIMARY_TRAIN_VAL_FRAMES = 5000  # Total frames for primary model (train + val)
-ENSEMBLE_TRAIN_VAL_FRAMES = 500  # Total frames per ensemble model (train + val)
+ENSEMBLE_TRAIN_VAL_FRAMES = 1500  # Total frames per ensemble model (train + val)
 COMBINED_TEST_FRAMES = 500  # Absolute for combined test from last 5 ps
-NUM_ENSEMBLES = 5  # Number of ensemble models
+NUM_ENSEMBLES = 3  # Number of ensemble models
 NUM_PRIMARY = 1  # Primary model
-NUM_INIT_STRUCTS = 5  # Number of diverse initial structures per iteration
+NUM_INIT_STRUCTS = 10  # Number of diverse initial structures per iteration
 FINAL_TEST_FILE = "final_test.extxyz"  # Combined test for final model evaluation
 PRIMARY_TRAIN_VAL_FILE = (
     "aimd_trajectory_primary_train_val.extxyz"  # For primary model  # For primary model
@@ -50,7 +36,7 @@ PRIMARY_TRAIN_VAL_FILE = (
 TRUE_CALIB_FILE = "true_calib.extxyz"
 TRUE_CALIB_FRAMES = 500
 MIN_DISTANCE_THRESHOLD = 0.8  # Angstrom, below this considered unphysical
-MAX_FORCE_THRESHOLD = 150.0  # kcal/mol/Å, above this eliminate from test
+MAX_FORCE_THRESHOLD = 500.0  # kcal/mol/Å, above this eliminate from test
 
 
 def read_xyz_frames(file_path):
@@ -215,12 +201,193 @@ def is_unphysical_structure(atoms, threshold=MIN_DISTANCE_THRESHOLD):
     return min_dist < threshold, min_dist
 
 
+def parse_extxyz_for_force_mags(file_path):
+    """Manually parse extxyz file to extract atomic force magnitudes."""
+    force_mags = []
+    with open(file_path, "r") as f:
+        lines = f.readlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
+        try:
+            n_atoms = int(line)
+        except ValueError:
+            i += 1
+            continue
+        i += 1  # Skip to info line
+        if i >= len(lines):
+            break
+        i += 1  # Skip info line, now at first atom line
+        if i >= len(lines):
+            break
+        forces = []
+        for j in range(n_atoms):
+            if i + j >= len(lines):
+                break
+            parts = lines[i + j].split()
+            if len(parts) >= 7:
+                try:
+                    fx, fy, fz = map(float, parts[-3:])
+                    forces.append([fx, fy, fz])
+                except ValueError:
+                    continue
+        if len(forces) == n_atoms:
+            forces_np = np.array(forces)
+            mags = np.linalg.norm(forces_np, axis=1)
+            force_mags.extend(mags)
+        i += n_atoms
+    return force_mags
+
+
+def parse_extxyz_for_force_components(file_path):
+    """Manually parse extxyz file to extract atomic force components fx, fy, fz."""
+    all_fx = []
+    all_fy = []
+    all_fz = []
+    with open(file_path, "r") as f:
+        lines = f.readlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
+        try:
+            n_atoms = int(line)
+        except ValueError:
+            i += 1
+            continue
+        i += 1  # Skip to info line
+        if i >= len(lines):
+            break
+        i += 1  # Skip info line, now at first atom line
+        if i >= len(lines):
+            break
+        forces = []
+        for j in range(n_atoms):
+            if i + j >= len(lines):
+                break
+            parts = lines[i + j].split()
+            if len(parts) >= 7:
+                try:
+                    fx, fy, fz = map(float, parts[-3:])
+                    forces.append([fx, fy, fz])
+                except ValueError:
+                    continue
+        if len(forces) == n_atoms:
+            forces_np = np.array(forces)
+            all_fx.extend(forces_np[:, 0])
+            all_fy.extend(forces_np[:, 1])
+            all_fz.extend(forces_np[:, 2])
+        i += n_atoms
+    return all_fx, all_fy, all_fz
+
+
+def plot_atomic_force_distributions(primary_file, ensemble_files, test_file):
+    """Plot the distribution of atomic force magnitudes for primary, ensemble, and test datasets."""
+    # Parse primary
+    primary_force_mags = parse_extxyz_for_force_mags(primary_file)
+
+    # Parse ensembles
+    ensemble_force_mags = []
+    for efile in ensemble_files:
+        e_mags = parse_extxyz_for_force_mags(efile)
+        ensemble_force_mags.extend(e_mags)
+
+    # Parse test
+    test_force_mags = parse_extxyz_for_force_mags(test_file)
+
+    # Plot histograms
+    fig, axs = plt.subplots(1, 3, figsize=(18, 6))
+
+    axs[0].hist(primary_force_mags, bins=50, alpha=0.5, label="Primary")
+    axs[0].set_title("Atomic Force Magnitudes - Primary")
+    axs[0].set_xlabel("Force (kcal/mol/Å)")
+    axs[0].set_ylabel("Count")
+    axs[0].legend()
+
+    axs[1].hist(ensemble_force_mags, bins=50, alpha=0.5, label="Ensembles")
+    axs[1].set_title("Atomic Force Magnitudes - All Ensembles")
+    axs[1].set_xlabel("Force (kcal/mol/Å)")
+    axs[1].set_ylabel("Count")
+    axs[1].legend()
+
+    axs[2].hist(test_force_mags, bins=50, alpha=0.5, label="Test")
+    axs[2].set_title("Atomic Force Magnitudes - Test")
+    axs[2].set_xlabel("Force (kcal/mol/Å)")
+    axs[2].set_ylabel("Count")
+    axs[2].legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_force_components_distributions(primary_file, ensemble_files, test_file):
+    """Plot the distribution of atomic force components (fx, fy, fz) for primary, ensemble, and test datasets in combined plots."""
+    # Parse primary
+    primary_fx, primary_fy, primary_fz = parse_extxyz_for_force_components(primary_file)
+
+    # Parse ensembles
+    ensemble_fx = []
+    ensemble_fy = []
+    ensemble_fz = []
+    for efile in ensemble_files:
+        e_fx, e_fy, e_fz = parse_extxyz_for_force_components(efile)
+        ensemble_fx.extend(e_fx)
+        ensemble_fy.extend(e_fy)
+        ensemble_fz.extend(e_fz)
+
+    # Parse test
+    test_fx, test_fy, test_fz = parse_extxyz_for_force_components(test_file)
+
+    # Plot histograms
+    fig, axs = plt.subplots(1, 3, figsize=(18, 6))
+
+    # Primary
+    axs[0].hist(primary_fx, bins=50, alpha=0.5, label="Fx")
+    axs[0].hist(primary_fy, bins=50, alpha=0.5, label="Fy")
+    axs[0].hist(primary_fz, bins=50, alpha=0.5, label="Fz")
+    axs[0].set_title("Force Components - Primary")
+    axs[0].set_xlabel("Force (kcal/mol/Å)")
+    axs[0].set_ylabel("Count")
+    axs[0].legend()
+
+    # Ensembles
+    axs[1].hist(ensemble_fx, bins=50, alpha=0.5, label="Fx")
+    axs[1].hist(ensemble_fy, bins=50, alpha=0.5, label="Fy")
+    axs[1].hist(ensemble_fz, bins=50, alpha=0.5, label="Fz")
+    axs[1].set_title("Force Components - All Ensembles")
+    axs[1].set_xlabel("Force (kcal/mol/Å)")
+    axs[1].set_ylabel("Count")
+    axs[1].legend()
+
+    # Test
+    axs[2].hist(test_fx, bins=50, alpha=0.5, label="Fx")
+    axs[2].hist(test_fy, bins=50, alpha=0.5, label="Fy")
+    axs[2].hist(test_fz, bins=50, alpha=0.5, label="Fz")
+    axs[2].set_title("Force Components - Test")
+    axs[2].set_xlabel("Force (kcal/mol/Å)")
+    axs[2].set_ylabel("Count")
+    axs[2].legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
 if __name__ == "__main__":
     full_output = "aimd_trajectory_full.extxyz"
+    reprocess = True
     if os.path.exists(full_output):
         print(f"Loading existing full trajectory from {full_output}")
-        valid_atoms = read(full_output, index=":")
-    else:
+        try:
+            valid_atoms = read(full_output, index=":")
+            reprocess = False
+        except Exception as e:
+            print(f"Error loading existing file: {e}. Reprocessing.")
+    if reprocess:
         # Process full trajectory once
         print("--- Processing full trajectory ---")
         combined_data = {}
@@ -337,7 +504,7 @@ if __name__ == "__main__":
     )
     # Sample initial structures for MLIP-MD from early (random)
     print("\nGenerating random initial structures for MLIP-MD")
-    init_structs_dir = "init_structs_4test"
+    init_structs_dir = "init_structs"
     init_struct_files = sample_init_structs(
         early_atoms,
         init_structs_dir,
@@ -376,11 +543,11 @@ if __name__ == "__main__":
     all_selected_energies_per_atom.extend(
         [frame.info["energy_per_atom"] for frame in combined_test]
     )
-    # Print steps where max_force > 150 in test dataset and check if unphysical
-    print("\nAnalysis of high max_force (>150) frames in test dataset:")
+    # Print steps where max_force > 500 in test dataset and check if unphysical
+    print("\nAnalysis of high max_force (>500) frames in test dataset:")
     high_force_info = []
     for frame in combined_test:
-        if frame.info["max_force"] > 150:
+        if frame.info["max_force"] > 500:
             is_unphysical, min_dist = is_unphysical_structure(frame)
             print(
                 f"Step: {frame.info['step']}, Max Force: {frame.info['max_force']:.2f}, Min Distance: {min_dist:.2f} Å, Unphysical: {is_unphysical}"
@@ -446,3 +613,16 @@ if __name__ == "__main__":
     print(f"Total unique frames across models: {total_unique}")
     print(f"Coverage of full trajectory: {coverage:.2f}%")
     print(f"Average Jaccard similarity between ensemble pairs: {avg_jaccard:.4f}")
+
+    # Plot atomic force distributions
+    ensemble_files = [
+        f"aimd_trajectory_ensemble_{i}_train_val.extxyz" for i in range(NUM_ENSEMBLES)
+    ]
+    plot_atomic_force_distributions(
+        PRIMARY_TRAIN_VAL_FILE, ensemble_files, FINAL_TEST_FILE
+    )
+
+    # Plot force components distributions
+    plot_force_components_distributions(
+        PRIMARY_TRAIN_VAL_FILE, ensemble_files, FINAL_TEST_FILE
+    )
