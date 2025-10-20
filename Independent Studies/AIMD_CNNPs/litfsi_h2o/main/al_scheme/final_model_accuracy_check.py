@@ -1,16 +1,19 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns  # Added for KDE plots
+from scipy.stats import linregress
 from scipy.stats import gaussian_kde
+
+# unc_score_data = np.load("unc_data_iter_1.npy", allow_pickle=True).item()
+# unc_score = unc_score_data["max_cal_unc_scores"]
+# print(min(unc_score), max(unc_score))
 
 # Load data
 PARITY_DATA_FILE = "temp_parity_iter_0.npy"
-# UNC_DATA_FILE = "unc_rmse_plot_iter_0.npy"
+# UNC_DATA_FILE = "unc_rmse_plot_iter_1.npy"
 parity_results = np.load(PARITY_DATA_FILE, allow_pickle=True).item()
 # unc_results = np.load(UNC_DATA_FILE, allow_pickle=True).item()
-shifted_true_energy = parity_results["true_energy"] - 7892
-shifted_pred_energy = parity_results["pred_energy"] - 7892
-energy_error = shifted_pred_energy - shifted_true_energy
+energy_error = parity_results["pred_energy"] - parity_results["true_energy"]
 force_error = parity_results["pred_force"] - parity_results["true_force"]
 # Calculate errors for display
 energy_mae = np.mean(np.abs(energy_error))
@@ -29,8 +32,24 @@ pred_force = parity_results["pred_force"]
 ss_res_force = np.sum((true_force - pred_force) ** 2)
 ss_tot_force = np.sum((true_force - np.mean(true_force)) ** 2)
 r2_force = 1 - (ss_res_force / ss_tot_force) if ss_tot_force != 0 else np.nan
+
+# For atomic force norms
+true_forces_reshaped = parity_results["true_force"].reshape(-1, 3)
+pred_forces_reshaped = parity_results["pred_force"].reshape(-1, 3)
+true_force_norms = np.linalg.norm(true_forces_reshaped, axis=1)
+pred_force_norms = np.linalg.norm(pred_forces_reshaped, axis=1)
+force_norm_error = pred_force_norms - true_force_norms
+force_norm_mae = np.mean(np.abs(force_norm_error))
+force_norm_rmse = np.sqrt(np.mean(force_norm_error**2))
+# Calculate R^2 for force norms
+ss_res_force_norm = np.sum((true_force_norms - pred_force_norms) ** 2)
+ss_tot_force_norm = np.sum((true_force_norms - np.mean(true_force_norms)) ** 2)
+r2_force_norm = (
+    1 - (ss_res_force_norm / ss_tot_force_norm) if ss_tot_force_norm != 0 else np.nan
+)
+
 # Create Figure for parity
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(24, 7))
 fig.suptitle("Model Error vs. DFT", fontsize=16)
 # Compute 2D KDE for energy error
 xy_energy = np.vstack([parity_results["true_energy"], energy_error])
@@ -55,10 +74,10 @@ ax1.ticklabel_format(style="plain", axis="x")  # Disable scientific notation
 # [np.min(parity_results["true_energy"]), np.max(parity_results["true_energy"])]
 # )
 # ax1.set_ylim([-max_abs_energy_error, max_abs_energy_error]) # Symmetric y-axis
-ax1.set_xlabel("DFT Energy [7892 kcal/mol/atom]")
+ax1.set_xlabel("DFT Energy [kcal/mol/atom]")
 ax1.set_ylabel("MLIP energy error [kcal/mol/atom]")
 ax1.set_title("Energy Error Correlation")
-ax1.grid(False, linestyle="--", alpha=0.6)
+ax1.grid(False)
 ax1.text(
     0.05,
     0.10,
@@ -92,7 +111,7 @@ ax2.axhline(y=0, color="r", linestyle="--", alpha=0.75)
 ax2.set_xlabel("DFT force [kcal/mol·Å]")
 ax2.set_ylabel("MLIP force error [kcal/mol·Å]")
 ax2.set_title("Force Error Correlation")
-ax2.grid(False, linestyle="--", alpha=0.6)
+ax2.grid(False)
 ax2.text(
     0.05,
     0.10,
@@ -101,152 +120,166 @@ ax2.text(
     fontsize=12,
     verticalalignment="top",
 )
-plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-plt.show()
-# Energy Parity with Marginals
-g_energy = sns.JointGrid(
-    x=parity_results["true_energy"], y=parity_results["pred_energy"], height=6, ratio=5
-)
-# Compute 2D KDE for energy parity
-xy_energy_parity = np.vstack(
-    [parity_results["true_energy"], parity_results["pred_energy"]]
-)
-z_energy_parity = gaussian_kde(xy_energy_parity)(xy_energy_parity)
+# Compute 2D KDE for force norm error
+xy_force_norm = np.vstack([true_force_norms, force_norm_error])
+z_force_norm = gaussian_kde(xy_force_norm)(xy_force_norm)
 # Normalize density for better color mapping
-z_energy_parity = z_energy_parity / np.max(z_energy_parity)
-# Energy Parity Plot with scatterplot colored by density
+z_force_norm = z_force_norm / np.max(z_force_norm)
+# Force Norm Error Plot with scatterplot colored by density
 sns.scatterplot(
-    x=parity_results["true_energy"],
-    y=parity_results["pred_energy"],
-    hue=z_energy_parity,
+    x=true_force_norms,
+    y=force_norm_error,
+    hue=z_force_norm,
     palette="viridis",
     alpha=0.5,
     s=10,
-    ax=g_energy.ax_joint,
+    ax=ax3,
     legend=False,
 )
-# Add y = x dashed line
-# min_val = min(
-# np.min(parity_results["true_energy"]), np.min(parity_results["pred_energy"])
-# )
-# max_val = max(
-# np.max(parity_results["true_energy"]), np.max(parity_results["pred_energy"])
-# )
-# g_energy.ax_joint.plot(
-# [min_val, max_val], [min_val, max_val], color="r", linestyle="--", alpha=0.75
-# )
-g_energy.ax_joint.ticklabel_format(
-    style="plain", axis="both"
-)  # Disable scientific notation
-g_energy.set_axis_labels(
-    "DFT Energy per Atom [kcal/mol/atom]", "MLIP Energy per Atom [kcal/mol/atom]"
+ax3.axhline(y=0, color="r", linestyle="--", alpha=0.75)
+ax3.set_xlabel("DFT Atomic Force Magnitude [kcal/mol·Å]")
+ax3.set_ylabel("MLIP Atomic Force Magnitude Error [kcal/mol·Å]")
+ax3.set_title("Atomic Force Magnitude Error Correlation")
+ax3.grid(False)
+ax3.text(
+    0.05,
+    0.10,
+    f"RMSE = {force_norm_rmse:.4f} kcal/mol·Å",
+    transform=ax3.transAxes,
+    fontsize=12,
+    verticalalignment="top",
 )
-# g_energy.ax_joint.set_title("Energy Parity")
-g_energy.ax_joint.grid(False, linestyle="--", alpha=0.6)
-# Add marginal KDEs (or use histplot for histograms)
-sns.kdeplot(
-    x=parity_results["true_energy"], fill=True, ax=g_energy.ax_marg_x, color="blue"
+plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+plt.show()
+
+# Energy Parity with Marginals
+fig_energy, ax_energy = plt.subplots(figsize=(6, 6))
+# Energy Parity Plot with scatterplot in single color
+sns.scatterplot(
+    x=parity_results["true_energy"],
+    y=parity_results["pred_energy"],
+    color="green",
+    alpha=0.5,
+    s=10,
+    ax=ax_energy,
+    legend=False,
 )
-sns.kdeplot(
-    y=parity_results["pred_energy"], fill=True, ax=g_energy.ax_marg_y, color="green"
+# Add y = x line extended to plot corners
+xmin, xmax = ax_energy.get_xlim()
+ymin, ymax = ax_energy.get_ylim()
+line_min = max(xmin, ymin)
+line_max = min(xmax, ymax)
+ax_energy.plot(
+    [line_min, line_max],
+    [line_min, line_max],
+    color="gray",
+    linestyle="-",
+    alpha=0.5,
+    lw=0.75,
 )
+ax_energy.ticklabel_format(style="plain", axis="both")  # Disable scientific notation
+ax_energy.set_xlabel("DFT Energy per Atom [kcal/mol/atom]")
+ax_energy.set_ylabel("MLIP Energy per Atom [kcal/mol/atom]")
+# ax_energy.set_title("Energy Parity")
+ax_energy.grid(False)
+ax_energy.set_aspect("equal", adjustable="box")
+# Enable all spines to form a square box
+ax_energy.spines["top"].set_visible(True)
+ax_energy.spines["right"].set_visible(True)
 # Add text for MAE and RMSE
-g_energy.ax_joint.text(
+ax_energy.text(
     0.05,
     0.95,
     f"Energy MAE: {energy_mae:.4f} kcal/mol\nEnergy RMSE: {energy_rmse:.4f} kcal/mol\nR²: {r2_energy:.4f}",
-    transform=g_energy.ax_joint.transAxes,
+    transform=ax_energy.transAxes,
     fontsize=12,
     verticalalignment="top",
 )
 plt.show()
 # Force Parity with Marginals
-g_force = sns.JointGrid(
-    x=parity_results["true_force"], y=parity_results["pred_force"], height=6, ratio=5
-)
-# Compute 2D KDE for force parity
-xy_force_parity = np.vstack(
-    [parity_results["true_force"], parity_results["pred_force"]]
-)
-z_force_parity = gaussian_kde(xy_force_parity)(xy_force_parity)
-# Normalize density for better color mapping
-z_force_parity = z_force_parity / np.max(z_force_parity)
-# Force Parity Plot with scatterplot colored by density
+fig_force, ax_force = plt.subplots(figsize=(6, 6))
+# Force Parity Plot with scatterplot in single color
 sns.scatterplot(
     x=parity_results["true_force"],
     y=parity_results["pred_force"],
-    hue=z_force_parity,
-    palette="viridis",
+    color="blue",
     alpha=0.5,
     s=10,
-    ax=g_force.ax_joint,
+    ax=ax_force,
     legend=False,
 )
-# Add y = x dashed line
-# min_val_f = min(
-# np.min(parity_results["true_force"]), np.min(parity_results["pred_force"])
-# )
-# max_val_f = max(
-# np.max(parity_results["true_force"]), np.max(parity_results["pred_force"])
-# )
-# g_force.ax_joint.plot(
-# [min_val_f, max_val_f],
-# [min_val_f, max_val_f],
-# color="r",
-# linestyle="--",
-# alpha=0.75,
-# )
-g_force.set_axis_labels("DFT Force [kcal/mol·Å]", "MLIP Force [kcal/mol·Å]")
-# g_force.ax_joint.set_title("Force Parity")
-g_force.ax_joint.grid(False, linestyle="--", alpha=0.6)
-# Add marginal KDEs
-sns.kdeplot(
-    x=parity_results["true_force"], fill=True, ax=g_force.ax_marg_x, color="blue"
+# Add y = x line extended to plot corners
+xmin_f, xmax_f = ax_force.get_xlim()
+ymin_f, ymax_f = ax_force.get_ylim()
+line_min_f = max(xmin_f, ymin_f)
+line_max_f = min(xmax_f, ymax_f)
+ax_force.plot(
+    [line_min_f, line_max_f],
+    [line_min_f, line_max_f],
+    color="gray",
+    linestyle="-",
+    alpha=0.5,
+    lw=0.75,
 )
-sns.kdeplot(
-    y=parity_results["pred_force"], fill=True, ax=g_force.ax_marg_y, color="green"
-)
+ax_force.set_xlabel("DFT Force [kcal/mol·Å]")
+ax_force.set_ylabel("MLIP Force [kcal/mol·Å]")
+# ax_force.set_title("Force Parity")
+ax_force.grid(False)
+ax_force.set_aspect("equal", adjustable="box")
+# Enable all spines to form a square box
+ax_force.spines["top"].set_visible(True)
+ax_force.spines["right"].set_visible(True)
 # Add text for MAE and RMSE
-g_force.ax_joint.text(
+ax_force.text(
     0.05,
     0.95,
     f"Force MAE: {force_mae:.4f} kcal/mol·Å\nForce RMSE: {force_rmse:.4f} kcal/mol·Å\nR²: {r2_force:.4f}",
-    transform=g_force.ax_joint.transAxes,
+    transform=ax_force.transAxes,
     fontsize=12,
     verticalalignment="top",
 )
 plt.show()
-# # Uncertainty vs RMSE plot
-# fig_unc = plt.figure(figsize=(8, 6))
-# ax_unc = fig_unc.add_subplot(1, 1, 1)
-# # Compute 2D KDE for cal_unc vs rmse
-# xy_unc_rmse = np.vstack(
-# [unc_results["atomic_force_rmse"], unc_results["atomic_force_uncertainty"]]
-# )
-# z_unc = gaussian_kde(xy_unc_rmse)(xy_unc_rmse)
-# # Normalize density
-# z_unc = z_unc / np.max(z_unc)
-# # Scatter with KDE coloring
-# sns.scatterplot(
-# x=unc_results["atomic_force_rmse"],
-# y=unc_results["atomic_force_uncertainty"],
-# hue=z_unc,
-# palette="viridis",
-# alpha=0.5,
-# s=10,
-# ax=ax_unc,
-# legend=False,
-# )
-# ax_unc.plot(
-# [0, max(unc_results["atomic_force_rmse"])],
-# [0, max(unc_results["atomic_force_rmse"])],
-# color="r",
-# linestyle="--",
-# alpha=0.75,
-# ) # y=x line
-# ax_unc.set_title("Uncertainty vs Force MAE per Atom")
-# ax_unc.set_xlabel("Force MAE per Atom [kcal/mol·Å]")
-# ax_unc.set_ylabel("Uncertainty [kcal/mol·Å]")
-# ax_unc.grid(False, linestyle="--", alpha=0.6)
-# plt.tight_layout()
-# plt.show()
+
+# Atomic Force Magnitude Parity with Marginals
+fig_force_norm, ax_force_norm = plt.subplots(figsize=(6, 6))
+# Force Norm Parity Plot with scatterplot in single color
+sns.scatterplot(
+    x=true_force_norms,
+    y=pred_force_norms,
+    color="blue",
+    alpha=0.5,
+    s=10,
+    ax=ax_force_norm,
+    legend=False,
+)
+# Add y = x line extended to plot corners
+xmin_fn, xmax_fn = ax_force_norm.get_xlim()
+ymin_fn, ymax_fn = ax_force_norm.get_ylim()
+line_min_fn = max(xmin_fn, ymin_fn)
+line_max_fn = min(xmax_fn, ymax_fn)
+ax_force_norm.plot(
+    [line_min_fn, line_max_fn],
+    [line_min_fn, line_max_fn],
+    color="gray",
+    linestyle="-",
+    alpha=0.5,
+    lw=0.75,
+)
+ax_force_norm.set_xlabel("DFT Atomic Force [kcal/mol·Å]")
+ax_force_norm.set_ylabel("MLIP Atomic Force [kcal/mol·Å]")
+# ax_force_norm.set_title("Atomic Force Parity")
+ax_force_norm.grid(False)
+ax_force_norm.set_aspect("equal", adjustable="box")
+# Enable all spines to form a square box
+ax_force_norm.spines["top"].set_visible(True)
+ax_force_norm.spines["right"].set_visible(True)
+# Add text for MAE and RMSE
+ax_force_norm.text(
+    0.05,
+    0.95,
+    f"Force MAE: {force_norm_mae:.4f} kcal/mol·Å\nForce RMSE: {force_norm_rmse:.4f} kcal/mol·Å\nR²: {r2_force_norm:.4f}",
+    transform=ax_force_norm.transAxes,
+    fontsize=12,
+    verticalalignment="top",
+)
+plt.show()
