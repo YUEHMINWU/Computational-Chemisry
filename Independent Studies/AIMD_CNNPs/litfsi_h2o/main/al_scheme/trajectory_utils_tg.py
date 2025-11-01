@@ -21,7 +21,21 @@ RUNS = [
         "ener": "litfsi_h2o_fc-1.ener",
         "start_step": 1,
         "end_step": 40000,
-    }
+    },
+    {
+        "pos": "../results/litfsi_h2o_re40000-pos.xyz",
+        "frc": "../results/litfsi_h2o_re40000-frc.xyz",
+        "ener": "litfsi_h2o_re40000-1.ener",
+        "start_step": 40001,
+        "end_step": 44500,
+    },
+    {
+        "pos": "../results/litfsi_h2o_re44500-pos.xyz",
+        "frc": "../results/litfsi_h2o_re44500-frc.xyz",
+        "ener": "litfsi_h2o_re44500-1.ener",
+        "start_step": 44501,
+        "end_step": 80000,
+    },
 ]
 PRIMARY_TRAIN_VAL_FRAMES = 5000  # Total frames for primary model (train + val)
 ENSEMBLE_TRAIN_VAL_FRAMES = 1500  # Total frames per ensemble model (train + val)
@@ -136,30 +150,31 @@ def sample_dataset(
         remaining_steps = np.array(
             [valid_atoms[i].info["step"] for i in remaining_indices]
         )
-        num_intervals = frames_to_use - 1
-        min_lag = 1
-        step_size = 1
-        lags = [min_lag + k * step_size for k in range(num_intervals)]
-        total_lag_needed = remaining_steps[-1] - remaining_steps[0]
-        current_sum_lag = sum(lags)
-        if current_sum_lag > total_lag_needed:
-            scale = total_lag_needed / current_sum_lag
-            lags = [max(1, int(lag * scale)) for lag in lags]
-        selected_steps_list = [remaining_steps[0]]
-        current_step = remaining_steps[0]
-        for lag in lags:
-            next_step = current_step + lag
-            idx = np.searchsorted(remaining_steps, next_step)
-            if idx < len(remaining_steps):
-                current_step = remaining_steps[idx]
-                selected_steps_list.append(current_step)
-            else:
-                break
+        step_min = remaining_steps[0]
+        step_max = remaining_steps[-1]
+        selected_steps_list = []
+        if frames_to_use == 1:
+            # Special case: just take the first (or middle, but first for consistency)
+            selected_steps_list = [step_min]
+        else:
+            # Calculate uniform positions
+            for k in range(frames_to_use):
+                ideal_step = step_min + k * (step_max - step_min) // (frames_to_use - 1)
+                # Find the closest step >= ideal_step
+                idx = np.searchsorted(remaining_steps, ideal_step)
+                if idx >= len(remaining_steps):
+                    idx = len(remaining_steps) - 1
+                selected_steps_list.append(remaining_steps[idx])
+        # Deduplicate in case of rounding/overlap (rare, but safe)
+        selected_steps_list = list(
+            dict.fromkeys(selected_steps_list)
+        )  # Preserves order
+        # If dedup caused shortfall (unlikely), pad with the last step
         while len(selected_steps_list) < frames_to_use and len(remaining_steps) > len(
             selected_steps_list
         ):
             selected_steps_list.append(remaining_steps[-1])
-        selected_steps_list = list(set(selected_steps_list))[:frames_to_use]
+        selected_steps_list = selected_steps_list[:frames_to_use]
         step_to_index = {
             remaining_steps[j]: remaining_indices[j]
             for j in range(len(remaining_indices))
@@ -435,7 +450,7 @@ if __name__ == "__main__":
         ase_write(full_output, valid_atoms)
         print(f"Saved full trajectory ({len(valid_atoms)} frames) to {full_output}")
     # Split into temporal parts
-    n_early = 30000
+    n_early = 70000
     n_late = 10000
     if len(valid_atoms) != n_early + n_late:
         print(f"Warning: Total frames {len(valid_atoms)}, expected {n_early + n_late}")
