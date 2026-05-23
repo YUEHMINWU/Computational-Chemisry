@@ -1,0 +1,57 @@
+# LAMMPS input script for MLPMD with Allegro model (Real Units)
+# Workflow: Single MD run
+# ----------------------------------------------------------------------------
+# Variable Definitions
+variable        TEMP equal 298.15
+variable        SEED equal 941109
+
+# General Setup
+# Energy: kcal/mol, Distance: Angstrom, Time: fs
+units           real
+atom_style      atomic
+boundary        p p p
+newton          on
+
+# Neighbor list settings
+neighbor        2.0 bin
+neigh_modify    every 5 delay 0 check no
+
+# System Definition
+read_data       /mnt/home/nuser08/ind_stu/litfsi_wis_20m/data/litfsi_wis_20m_10ips.data
+mass 1 1.0080 # H
+mass 2 15.9990 # O
+mass 3 6.9400 # Li
+mass 4 18.9984 # F
+mass 5 32.0600 # S
+mass 6 12.0110 # C
+mass 7 14.0070 # N
+
+# Potential Definition
+pair_style      allegro
+pair_coeff      * * /mnt/home/nuser08/ind_stu/litfsi_wis_20m/results/allegro_model_output_primary_iter_0/deployed.nequip.pth H O Li F S C N
+
+# Initialize Velocities
+velocity        all create ${TEMP} ${SEED}
+
+# ----------------------------------------------------------------------------
+# MD Run (NVT)
+# ----------------------------------------------------------------------------
+timestep        0.5
+fix             1 all nvt temp ${TEMP} ${TEMP} 100.0
+
+thermo_style    custom step temp pe ke etotal econserve
+thermo          100
+
+# Dump trajectory and forces (custom format with unwrapped positions)
+dump            md_dump_pos all custom 100 /mnt/home/nuser08/ind_stu/litfsi_wis_20m/results/litfsi_wis_20m_10ips-pos.xyz element xu yu zu
+dump_modify     md_dump_pos element H O Li F S C N sort id
+
+dump            md_dump_frc all custom 100 /mnt/home/nuser08/ind_stu/litfsi_wis_20m/results/litfsi_wis_20m_10ips-frc.xyz element fx fy fz
+dump_modify     md_dump_frc element H O Li F S C N sort id
+
+print "Starting 400000-step NVT MD run..."
+run             400000
+print "MD run complete."
+
+# ----------------------------------------------------------------------------
+print "Simulation finished."
