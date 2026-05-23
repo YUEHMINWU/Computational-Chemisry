@@ -1,0 +1,110 @@
+&GLOBAL
+  PROJECT dft_label
+  RUN_TYPE ENERGY_FORCE
+  PRINT_LEVEL LOW
+&END GLOBAL
+&FORCE_EVAL
+  METHOD QS
+  &DFT
+    BASIS_SET_FILE_NAME /home/nuser08/.conda/envs/aimd_env/share/cp2k/data/BASIS_MOLOPT
+    POTENTIAL_FILE_NAME /home/nuser08/.conda/envs/aimd_env/share/cp2k/data/GTH_POTENTIALS
+    CHARGE 0
+    &MGRID
+      CUTOFF 400
+      NGRIDS 5
+    &END MGRID
+    &QS
+      EPS_DEFAULT      1.0000000000000000E-13
+      EXTRAPOLATION  ASPC
+      EXTRAPOLATION_ORDER  2 
+    &END QS
+    &SCF
+      SCF_GUESS ATOMIC                                                    
+      MAX_SCF 300
+      IGNORE_CONVERGENCE_FAILURE                              
+      &OT                               
+        MINIMIZER DIIS                          
+        PRECONDITIONER NONE                                
+      &END OT
+      &OUTER_SCF ON                                                   
+        MAX_SCF 10                            
+      &END OUTER_SCF
+    &END SCF
+    &XC
+      DENSITY_CUTOFF     1.0000000000000000E-10
+      GRADIENT_CUTOFF     1.0000000000000000E-10
+      TAU_CUTOFF     1.0000000000000000E-10
+      &XC_GRID
+        XC_SMOOTH_RHO  NN10
+        XC_DERIV  SPLINE2_SMOOTH
+      &END XC_GRID
+      &XC_FUNCTIONAL  NO_SHORTCUT
+        &BECKE88  T
+        &END BECKE88
+        &LYP  T
+        &END LYP
+      &END XC_FUNCTIONAL
+      &VDW_POTENTIAL
+        POTENTIAL_TYPE  PAIR_POTENTIAL
+        &PAIR_POTENTIAL
+          TYPE  DFTD3
+          R_CUTOFF     1.0583544200000000E+01
+          REFERENCE_FUNCTIONAL BLYP
+          PARAMETER_FILE_NAME dftd3.dat        
+        &END PAIR_POTENTIAL
+      &END VDW_POTENTIAL
+    &END XC
+  &END DFT
+  &SUBSYS
+     &CELL
+       ABC 14.936 14.936 14.936
+       MULTIPLE_UNIT_CELL  1 1 1                            
+    &END CELL
+    &TOPOLOGY
+      COORD_FILE_FORMAT XYZ
+      COORD_FILE_NAME input.xyz
+      CONNECTIVITY OFF
+    &END TOPOLOGY
+    &KIND Li
+      ELEMENT Li
+      BASIS_SET DZVP-MOLOPT-SR-GTH
+      POTENTIAL GTH-BLYP-q3
+    &END KIND
+    &KIND C
+      ELEMENT C
+      BASIS_SET DZVP-MOLOPT-SR-GTH
+      POTENTIAL GTH-BLYP-q4
+    &END KIND
+    &KIND H
+      ELEMENT H
+      BASIS_SET DZVP-MOLOPT-SR-GTH
+      POTENTIAL GTH-BLYP-q1
+    &END KIND
+    &KIND O
+      ELEMENT O
+      BASIS_SET DZVP-MOLOPT-SR-GTH
+      POTENTIAL GTH-BLYP-q6
+    &END KIND
+    &KIND N
+      ELEMENT N
+      BASIS_SET DZVP-MOLOPT-SR-GTH
+      POTENTIAL GTH-BLYP-q5
+    &END KIND
+    &KIND S
+      ELEMENT S
+      BASIS_SET DZVP-MOLOPT-SR-GTH
+      POTENTIAL GTH-BLYP-q6
+    &END KIND
+    &KIND F
+      ELEMENT F
+      BASIS_SET DZVP-MOLOPT-SR-GTH
+      POTENTIAL GTH-BLYP-q7
+    &END KIND
+  &END SUBSYS
+
+  &PRINT
+    &FORCES ON
+    &END FORCES
+  &END PRINT
+
+&END FORCE_EVAL
