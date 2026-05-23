@@ -1,0 +1,136 @@
+&GLOBAL
+  PROJECT litfsi_wis_20m_298k
+  RUN_TYPE MD            
+  PRINT_LEVEL LOW     
+&END GLOBAL
+
+&MOTION
+  &MD
+    ENSEMBLE NVT
+    STEPS 40000  
+    TIMESTEP 0.5  
+    TEMPERATURE 298.15
+    &THERMOSTAT
+      &NOSE
+        LENGTH 3
+        YOSHIDA 3
+        TIMECON 100.0
+        MULTIPLE_TIME_STEPS 2
+      &END NOSE
+    &END THERMOSTAT
+  &END MD
+  &PRINT
+    &TRAJECTORY
+      FILENAME =../results/litfsi_wis_20m_298k-pos.xyz
+      &EACH
+      MD 10
+      &END EACH
+    &END TRAJECTORY
+    &FORCES
+      FILENAME =../results/litfsi_wis_20m_298k-frc.xyz
+      &EACH
+      MD 10
+      &END EACH
+    &END FORCES
+  &END PRINT
+&END MOTION
+
+&FORCE_EVAL
+  METHOD QS    
+  &DFT
+    BASIS_SET_FILE_NAME /home/nuser08/.conda/envs/aimd_env/share/cp2k/data/BASIS_MOLOPT
+    POTENTIAL_FILE_NAME /home/nuser08/.conda/envs/aimd_env/share/cp2k/data/GTH_POTENTIALS    
+    CHARGE 0                                                               
+    &MGRID
+      CUTOFF 400                                               
+      NGRIDS 5                                 
+    &END MGRID
+    &QS
+      EPS_DEFAULT     1.0000000000000000E-13
+      EXTRAPOLATION  ASPC
+      EXTRAPOLATION_ORDER  2                  
+    &END QS
+    &SCF
+      SCF_GUESS ATOMIC                                                   
+      MAX_SCF 300
+      IGNORE_CONVERGENCE_FAILURE                              
+      &OT                                      
+        MINIMIZER DIIS                         
+        PRECONDITIONER NONE                                        
+      &END OT
+      &OUTER_SCF ON                                                    
+        MAX_SCF 10                            
+      &END OUTER_SCF
+    &END SCF
+    &XC
+      DENSITY_CUTOFF     1.0000000000000000E-10
+      GRADIENT_CUTOFF     1.0000000000000000E-10
+      TAU_CUTOFF     1.0000000000000000E-10
+      &XC_GRID
+        XC_SMOOTH_RHO  NN10
+        XC_DERIV  SPLINE2_SMOOTH
+      &END XC_GRID
+      &XC_FUNCTIONAL  NO_SHORTCUT
+        &BECKE88  T
+        &END BECKE88
+        &LYP  T
+        &END LYP
+      &END XC_FUNCTIONAL
+      &VDW_POTENTIAL
+        POTENTIAL_TYPE  PAIR_POTENTIAL
+        &PAIR_POTENTIAL
+          TYPE  DFTD3
+          R_CUTOFF     1.0583544200000000E+01
+          REFERENCE_FUNCTIONAL BLYP
+          PARAMETER_FILE_NAME dftd3.dat        
+        &END PAIR_POTENTIAL
+      &END VDW_POTENTIAL
+    &END XC
+  &END DFT
+  &SUBSYS
+    &CELL
+      ABC 14.936 14.936 14.936
+      MULTIPLE_UNIT_CELL  1 1 1                           
+    &END CELL
+    &TOPOLOGY
+      COORD_FILE_FORMAT PDB                    
+      COORD_FILE_NAME ../data/gro_md_298k/final_nvt_elements.pdb          
+      CONNECTIVITY OFF                         
+    &END TOPOLOGY
+    &KIND Li
+      ELEMENT Li                                  
+      BASIS_SET DZVP-MOLOPT-SR-GTH              
+      POTENTIAL GTH-BLYP-q3                     
+    &END KIND
+    &KIND C
+      ELEMENT C                                  
+      BASIS_SET DZVP-MOLOPT-SR-GTH
+      POTENTIAL GTH-BLYP-q4
+    &END KIND
+    &KIND H                                    
+      ELEMENT H
+      BASIS_SET DZVP-MOLOPT-SR-GTH
+      POTENTIAL GTH-BLYP-q1
+    &END KIND
+    &KIND O
+      ELEMENT O                                    
+      BASIS_SET DZVP-MOLOPT-SR-GTH
+      POTENTIAL GTH-BLYP-q6
+    &END KIND
+    &KIND N                                    
+      ELEMENT N
+      BASIS_SET DZVP-MOLOPT-SR-GTH                
+      POTENTIAL GTH-BLYP-q5                     
+    &END KIND
+    &KIND S                                    
+      ELEMENT S
+      BASIS_SET DZVP-MOLOPT-SR-GTH                
+      POTENTIAL GTH-BLYP-q6                     
+    &END KIND
+    &KIND F                                    
+      ELEMENT F
+      BASIS_SET DZVP-MOLOPT-SR-GTH                
+      POTENTIAL GTH-BLYP-q7                     
+    &END KIND
+  &END SUBSYS
+&END FORCE_EVAL
