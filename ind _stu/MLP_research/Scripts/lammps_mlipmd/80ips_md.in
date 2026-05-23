@@ -1,0 +1,83 @@
+# LAMMPS input script for MLIPMD with Allegro model (Real Units)
+# Workflow: Equilibration followed by Production
+# ----------------------------------------------------------------------------
+# Variable Definitions
+variable        TEMP equal 298.15
+variable        SEED equal 956876
+
+# General Setup
+# Energy: kcal/mol, Distance: Angstrom, Time: fs
+units           real
+atom_style      atomic
+boundary        p p p
+newton          on
+
+# Neighbor list settings
+neighbor        2.0 bin
+neigh_modify    every 5 delay 0 check no
+
+# System Definition
+read_data       /mnt/home/nuser08/ind_stu/litfsi_wis_20m/data/litfsi_wis_20m_80ips_01.data
+mass 1 1.0080 # H
+mass 2 15.9990 # O
+mass 3 6.9400 # Li
+mass 4 18.9984 # F
+mass 5 32.0600 # S
+mass 6 12.0110 # C
+mass 7 14.0070 # N
+
+# Potential Definition
+pair_style      allegro
+pair_coeff      * * /mnt/home/nuser08/ind_stu/litfsi_wis_20m/results/allegro_aug01/deployed.nequip.pth H O Li F S C N
+
+# Initialize Velocities
+velocity        all create ${TEMP} ${SEED}
+
+# ----------------------------------------------------------------------------
+# 1. Equilibration Run (NVT)
+# ----------------------------------------------------------------------------
+timestep        0.5
+fix             1 all nvt temp ${TEMP} ${TEMP} 100.0
+
+thermo_style    custom step temp pe ke etotal econserve
+thermo          100 # Log thermodynamics every 0.5 ps
+restart         20000 litfsi_wis_20m_80ips_01.restart
+
+# Dump trajectory for equilibration
+dump            1 all custom 100 /mnt/home/nuser08/ind_stu/litfsi_wis_20m/results/litfsi_wis_20m_80ips_01-eq-pos.xyz element xu yu zu
+dump_modify     1 element H O Li F S C N
+dump_modify     1 sort id
+
+print "Starting 400000-step NVT equilibration..."
+run             400000
+unfix           1
+undump          1
+print "Equilibration complete."
+
+
+# ----------------------------------------------------------------------------
+# 2. Production Run (NVT)
+# ----------------------------------------------------------------------------
+timestep  0.5
+
+fix             2 all nvt temp ${TEMP} ${TEMP} 100.0
+
+thermo_style    custom step temp pe ke etotal econserve
+thermo          100
+restart         20000 litfsi_wis_20m_80ips_01.restart
+
+# Dump trajectory, velocities, and forces for production
+dump            1 all custom 50 /mnt/home/nuser08/ind_stu/litfsi_wis_20m/results/litfsi_wis_20m_80ips_01-prod-pos.xyz element xu yu zu
+dump_modify     1 element H O Li F S C N
+dump_modify     1 sort id
+
+dump            2 all custom 50 /mnt/home/nuser08/ind_stu/litfsi_wis_20m/results/litfsi_wis_20m_80ips_01-prod-vel.xyz element vx vy vz
+dump_modify     2 element H O Li F S C N
+dump_modify     2 sort id
+
+print "Starting 2000000-step NVT production run..."
+run             2000000
+print "Production run complete."
+
+# ----------------------------------------------------------------------------
+print "Simulation finished."
